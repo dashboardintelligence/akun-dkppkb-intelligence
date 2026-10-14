@@ -94,7 +94,10 @@
     var gen = PGEN, tok = AppState.sessionToken;
     PREFETCHING[key] = 1;
     return call('getPageContent', [tok, page, p]).then(function (r) {
-      if (r && r.success && !r.redirect && gen === PGEN && tok === AppState.sessionToken) PCACHE[key] = { html: r.html, title: r.title, t: Date.now() };
+      if (r && r.success && !r.redirect && gen === PGEN && tok === AppState.sessionToken) {
+        var ks = Object.keys(PCACHE); if (ks.length > 80) delete PCACHE[ks[0]];
+        PCACHE[key] = { html: r.html, title: r.title, t: Date.now() };
+      }
     }).catch(function () { }).then(function () { delete PREFETCHING[key]; });
   }
   /** Muat semua menu satu per satu agar klik pertama pun terasa seketika. */
@@ -114,6 +117,18 @@
       if (document.hidden) return;
       call('apiMerek', []).catch(function () { });
     }, 240000);
+  }
+  /** Muat tab di dalam halaman yang sedang dibuka (Daftar, Periode, Bulanan, dst.). */
+  function prefetchTabs() {
+    var tok = AppState.sessionToken, my = AppState.req;
+    var items = $$('#app-container .seg-btn[data-nav]').filter(function (b) { return !b.getAttribute('aria-current'); }).map(function (b) {
+      var pr = {}; try { pr = JSON.parse(b.getAttribute('data-params') || '{}'); } catch (e) { }
+      return { page: b.getAttribute('data-nav'), params: pr };
+    });
+    (function next(i) {
+      if (i >= items.length || AppState.sessionToken !== tok || AppState.req !== my) return;
+      prefetchPage(items[i].page, items[i].params).then(function () { setTimeout(function () { next(i + 1); }, 120); });
+    })(0);
   }
   function markMenu(page) {
     $$('[data-menu]').forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-menu') === page); });
@@ -283,7 +298,7 @@
       if (r.expired) return forceLogout(r.message);
       if (!r.success) { c.innerHTML = '<div class="card card-pad empty"><span class="ic">cloud_off</span><p>' + esc(r.message || 'Gagal memuat halaman.') + '</p><button type="button" class="btn btn-primary" data-act="reload">Coba lagi</button></div>'; return; }
       if (r.redirect) { if (r.message) toast(r.message, 'err'); return navigateTo(r.redirect, {}, { redirect: true }); }
-      var ckeys = Object.keys(PCACHE); if (ckeys.length > 30) delete PCACHE[ckeys[0]];
+      var ckeys = Object.keys(PCACHE); if (ckeys.length > 80) delete PCACHE[ckeys[0]];
       PCACHE[ckey] = { html: r.html, title: r.title, t: Date.now() };
       if (hit) {
         var ae = document.activeElement, sibuk = !!$('#modal-back') || (ae && c.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName));
@@ -311,6 +326,7 @@
     var ftk = $('#form-tarik'); if (ftk) syncTarik(ftk);
     if (page === 'pengguna' && AppState.params && AppState.params.tambah) { delete AppState.params.tambah; openUserForm({}); }
     if (AppState.pending) { var fn = AppState.pending; AppState.pending = null; fn(); }
+    setTimeout(prefetchTabs, 400);
   }
   function updBack() { var b = $('#btn-back'); if (b) b.hidden = !(AppState.sessionToken && AppState.rendered && (AppState.hist.length || AppState.page !== 'beranda')); }
   function goBack() {
@@ -833,7 +849,7 @@
   ['mouseover', 'pointerdown', 'touchstart'].forEach(function (evn) {
     document.addEventListener(evn, function (ev) {
       var n = ev.target && ev.target.closest && ev.target.closest('[data-nav]');
-      if (n && AppState.sessionToken && n.getAttribute('data-nav') !== AppState.page && !n.getAttribute('data-params')) prefetchPage(n.getAttribute('data-nav'));
+      if (n && AppState.sessionToken) { var pr = {}; try { pr = JSON.parse(n.getAttribute('data-params') || '{}'); } catch (e) { } if (!pr.tambah) prefetchPage(n.getAttribute('data-nav'), pr); }
     }, { passive: true });
   });
   document.addEventListener('click', function (ev) {
