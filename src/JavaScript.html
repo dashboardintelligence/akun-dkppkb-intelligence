@@ -76,6 +76,7 @@
     if (!READ_API[fn]) pcReset();   // ada perubahan data: buang cache halaman
     args = [AppState.sessionToken].concat(args || []);
     return call(fn, args).then(function (r) {
+      if (!READ_API[fn]) pcReset();   // data berubah di server: buang lagi agar tidak ada halaman basi
       if (r && r.success) return r.data;
       if (r && r.expired) { forceLogout(r.message); }
       var err = new Error((r && r.message) || 'Terjadi kesalahan.'); err.handled = !!(r && r.expired); throw err;
@@ -83,31 +84,73 @@
   }
 
 
-  /* ---------- percepatan: muat halaman lain di latar belakang ---------- */
-  var PGEN = 0, PREFETCHING = {}, keepTimer = null;
-  function pcReset() { PCACHE = {}; PGEN++; }
+  /* ---------- percepatan: jelajahi semua halaman dan tab di latar belakang ---------- */
+  var PGEN = 0, PQ = [], PRUN = 0, PSEEN = {}, PNSEEN = 0, keepTimer = null, crawlTimer = null, PTTL = 3600000;
+  function pcReset() { PCACHE = {}; PGEN++; PQ = []; PSEEN = {}; PNSEEN = 0; scheduleCrawl(); }
+  function pkey(page, params) { return page + '|' + JSON.stringify(Object.assign({}, params || {}, periode())); }
+  /** Ambil satu halaman ke cache. Mengembalikan entri cache (atau null bila gagal). */
   function prefetchPage(page, params) {
-    if (!AppState.sessionToken) return Promise.resolve();
+    if (!AppState.sessionToken) return Promise.resolve(null);
     var p = Object.assign({}, params || {}, periode());
     var key = page + '|' + JSON.stringify(p);
-    if ((PCACHE[key] && Date.now() - PCACHE[key].t < 600000) || PREFETCHING[key]) return Promise.resolve();
+    if (PCACHE[key] && Date.now() - PCACHE[key].t < PTTL) return Promise.resolve(PCACHE[key]);
     var gen = PGEN, tok = AppState.sessionToken;
-    PREFETCHING[key] = 1;
     return call('getPageContent', [tok, page, p]).then(function (r) {
       if (r && r.success && !r.redirect && gen === PGEN && tok === AppState.sessionToken) {
-        var ks = Object.keys(PCACHE); if (ks.length > 80) delete PCACHE[ks[0]];
+        var ks = Object.keys(PCACHE); if (ks.length > 150) delete PCACHE[ks[0]];
         PCACHE[key] = { html: r.html, title: r.title, t: Date.now() };
+        return PCACHE[key];
       }
-    }).catch(function () { }).then(function () { delete PREFETCHING[key]; });
+      return null;
+    }).catch(function () { return null; });
   }
-  /** Muat semua menu satu per satu agar klik pertama pun terasa seketika. */
-  function prefetchMenu() {
+  /** Antrean: maksimal 3 permintaan bersamaan; yang mendesak (tab di halaman aktif) didahulukan. */
+  function enqueue(page, params, urgent) {
+    if (!AppState.sessionToken || !page || (params && params.tambah)) return;
+    var key = pkey(page, params);
+    if (PSEEN[key] || PNSEEN > 80) return;
+    if (PCACHE[key] && Date.now() - PCACHE[key].t < PTTL) { PSEEN[key] = 1; discoverHtml(PCACHE[key].html); return; }
+    PSEEN[key] = 1; PNSEEN++;
+    var job = { page: page, params: params || {} };
+    if (urgent) PQ.unshift(job); else PQ.push(job);
+    pump();
+  }
+  function pump() {
     var tok = AppState.sessionToken;
-    var ids = $$('.nav-item[data-nav]').map(function (b) { return b.getAttribute('data-nav'); }).filter(function (id) { return id !== AppState.page; });
-    (function next(i) {
-      if (i >= ids.length || AppState.sessionToken !== tok) return;
-      prefetchPage(ids[i]).then(function () { setTimeout(function () { next(i + 1); }, 150); });
-    })(0);
+    while (PRUN < 3 && PQ.length && tok) {
+      var job = PQ.shift(); PRUN++;
+      (function (j, gen) {
+        prefetchPage(j.page, j.params).then(function (e) {
+          PRUN--;
+          if (e && gen === PGEN) discoverHtml(e.html);
+          setTimeout(pump, 60);
+        });
+      })(job, PGEN);
+    }
+  }
+  /** Cari tautan [data-nav] pada HTML halaman (tab, kartu, tombol) lalu antrekan semuanya. */
+  function discoverHtml(html) {
+    var doc; try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (e) { return; }
+    var els = doc.querySelectorAll('.seg-btn[data-nav]');
+    for (var i = 0; i < els.length; i++) {
+      var pr = {}; try { pr = JSON.parse(els[i].getAttribute('data-params') || '{}'); } catch (e) { }
+      enqueue(els[i].getAttribute('data-nav'), pr, false);
+    }
+  }
+  /** Tab di halaman yang sedang terbuka didahulukan. */
+  function prefetchTabs() {
+    $$('#app-container .seg-btn[data-nav]').forEach(function (b) {
+      var pr = {}; try { pr = JSON.parse(b.getAttribute('data-params') || '{}'); } catch (e) { }
+      enqueue(b.getAttribute('data-nav'), pr, true);
+    });
+  }
+  function prefetchMenu() {
+    $$('.nav-item[data-nav]').forEach(function (b) { enqueue(b.getAttribute('data-nav'), {}, false); });
+  }
+  function scheduleCrawl() {
+    clearTimeout(crawlTimer);
+    if (!AppState.sessionToken) return;
+    crawlTimer = setTimeout(function () { if (AppState.sessionToken) { prefetchTabs(); prefetchMenu(); } }, 3000);
   }
   /** Ping ringan agar server Apps Script tetap hangat selama aplikasi dipakai. */
   function startKeepAlive() {
@@ -117,18 +160,6 @@
       if (document.hidden) return;
       call('apiMerek', []).catch(function () { });
     }, 240000);
-  }
-  /** Muat tab di dalam halaman yang sedang dibuka (Daftar, Periode, Bulanan, dst.). */
-  function prefetchTabs() {
-    var tok = AppState.sessionToken, my = AppState.req;
-    var items = $$('#app-container .seg-btn[data-nav]').filter(function (b) { return !b.getAttribute('aria-current'); }).map(function (b) {
-      var pr = {}; try { pr = JSON.parse(b.getAttribute('data-params') || '{}'); } catch (e) { }
-      return { page: b.getAttribute('data-nav'), params: pr };
-    });
-    (function next(i) {
-      if (i >= items.length || AppState.sessionToken !== tok || AppState.req !== my) return;
-      prefetchPage(items[i].page, items[i].params).then(function () { setTimeout(function () { next(i + 1); }, 120); });
-    })(0);
   }
   function markMenu(page) {
     $$('[data-menu]').forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-menu') === page); });
@@ -288,7 +319,7 @@
     closeDrawer(); busy(true);
     var c = $('#app-container');
     var p = Object.assign({}, params, periode());
-    var ckey = page + '|' + JSON.stringify(p), hit = !(opts && (opts.keep || opts.redirect)) && PCACHE[ckey] && (Date.now() - PCACHE[ckey].t < 600000) ? PCACHE[ckey] : null;
+    var ckey = page + '|' + JSON.stringify(p), hit = !(opts && (opts.keep || opts.redirect)) && PCACHE[ckey] && (Date.now() - PCACHE[ckey].t < PTTL) ? PCACHE[ckey] : null;
     if (hit) injectPage(page, hit.html, hit.title, opts);   // tampil seketika, lalu disegarkan di latar
     else if (!(opts && opts.keep)) c.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
     return call('getPageContent', [AppState.sessionToken, page, p]).then(function (r) {
@@ -298,7 +329,7 @@
       if (r.expired) return forceLogout(r.message);
       if (!r.success) { c.innerHTML = '<div class="card card-pad empty"><span class="ic">cloud_off</span><p>' + esc(r.message || 'Gagal memuat halaman.') + '</p><button type="button" class="btn btn-primary" data-act="reload">Coba lagi</button></div>'; return; }
       if (r.redirect) { if (r.message) toast(r.message, 'err'); return navigateTo(r.redirect, {}, { redirect: true }); }
-      var ckeys = Object.keys(PCACHE); if (ckeys.length > 80) delete PCACHE[ckeys[0]];
+      var ckeys = Object.keys(PCACHE); if (ckeys.length > 150) delete PCACHE[ckeys[0]];
       PCACHE[ckey] = { html: r.html, title: r.title, t: Date.now() };
       if (hit) {
         var ae = document.activeElement, sibuk = !!$('#modal-back') || (ae && c.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName));
@@ -849,7 +880,7 @@
   ['mouseover', 'pointerdown', 'touchstart'].forEach(function (evn) {
     document.addEventListener(evn, function (ev) {
       var n = ev.target && ev.target.closest && ev.target.closest('[data-nav]');
-      if (n && AppState.sessionToken) { var pr = {}; try { pr = JSON.parse(n.getAttribute('data-params') || '{}'); } catch (e) { } if (!pr.tambah) prefetchPage(n.getAttribute('data-nav'), pr); }
+      if (n && AppState.sessionToken) { var pr = {}; try { pr = JSON.parse(n.getAttribute('data-params') || '{}'); } catch (e) { } enqueue(n.getAttribute('data-nav'), pr, true); }
     }, { passive: true });
   });
   document.addEventListener('click', function (ev) {
@@ -952,8 +983,8 @@
         '<div class="form-actions"><button class="btn btn-primary" type="button" data-nav="pengaturan">Pengaturan Akun</button><button class="btn btn-ghost" type="button" data-act="logout">Keluar</button></div>');
       if (window.DkTheme) window.DkTheme.refresh();
     });
-    $('#sel-bulan').addEventListener('change', function () { navigateTo(AppState.page, AppState.params).then(prefetchMenu); refreshBadgeForPeriod(); });
-    $('#sel-tahun').addEventListener('change', function () { navigateTo(AppState.page, AppState.params).then(prefetchMenu); });
+    $('#sel-bulan').addEventListener('change', function () { navigateTo(AppState.page, AppState.params).then(function () { prefetchTabs(); prefetchMenu(); }); refreshBadgeForPeriod(); });
+    $('#sel-tahun').addEventListener('change', function () { navigateTo(AppState.page, AppState.params).then(function () { prefetchTabs(); prefetchMenu(); }); });
     $('#skip-link').addEventListener('click', function (e) { e.preventDefault(); $('#main').focus(); });
     showLogin('');
     if (API_URL) {
