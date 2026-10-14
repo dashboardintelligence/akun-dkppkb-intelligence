@@ -42,7 +42,24 @@
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
   function show(el, on) { if (el) el.hidden = !on; }
 
+  /* Mode statis (GitHub Pages): config.js mengisi window.DKPPKB_API dengan URL web app Apps Script.
+   * Tanpa itu, dipakai google.script.run (halaman dilayani langsung oleh Apps Script / Blogger). */
+  var API_URL = (typeof window.DKPPKB_API === 'string' && /^https:\/\/script\.google\.com\/[^\s"'<>]+$/.test(window.DKPPKB_API)) ? window.DKPPKB_API : '';
+  var SESI_KEY = 'dkppkb_sesi';
+  function simpanSesi(t) { if (!API_URL) return; try { if (t) sessionStorage.setItem(SESI_KEY, t); else sessionStorage.removeItem(SESI_KEY); } catch (e) { } }
+  function callFetch(fn, args) {
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function () { ctl.abort(); }, 90000) : null;
+    return fetch(API_URL, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ fn: fn, args: args || [] }), signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { if (!r.ok) throw new Error('Server mengembalikan status ' + r.status + '.'); return r.text(); })
+      .then(function (t) {
+        try { return JSON.parse(t); } catch (e) { throw new Error('Respons server tidak valid. Pastikan URL Apps Script benar dan deployment berakses "Siapa saja".'); }
+      }, function (e) { throw new Error(e && e.name === 'AbortError' ? 'Server terlalu lama menjawab. Coba lagi.' : 'Koneksi ke server gagal. Periksa jaringan Anda.'); })
+      .then(function (v) { if (timer) clearTimeout(timer); return v; }, function (e) { if (timer) clearTimeout(timer); throw e; });
+  }
   function call(fn, args) {
+    if (API_URL) return callFetch(fn, args);
+    if (typeof google === 'undefined' || !google.script) return Promise.reject(new Error('URL Apps Script belum diatur. Isi file config.js dengan URL web app.'));
     return new Promise(function (resolve, reject) {
       try {
         var r = google.script.run
@@ -100,7 +117,7 @@
     setTimeout(function () { $('#login-user').focus(); }, 50);
   }
   function forceLogout(msg) {
-    PCACHE = {}; AppState.sessionToken = null; AppState.user = null; AppState.hist = []; AppState.rendered = false; updBack();
+    PCACHE = {}; simpanSesi(null); AppState.sessionToken = null; AppState.user = null; AppState.hist = []; AppState.rendered = false; updBack();
     closeModal(true); closeDrawer(); busy(false);
     showLogin(msg || 'Sesi berakhir. Silakan masuk kembali.');
   }
@@ -112,7 +129,7 @@
     btn.disabled = true; btn.textContent = 'Memeriksa…';
     call('doLogin', [u, p]).then(function (r) {
       if (!r || !r.success) throw new Error((r && r.message) || 'Gagal masuk.');
-      AppState.sessionToken = r.data.token;
+      AppState.sessionToken = r.data.token; simpanSesi(r.data.token);
       return startApp();
     }).catch(function (err) {
       msg.textContent = err.message;
@@ -879,6 +896,16 @@
     $('#sel-tahun').addEventListener('change', function () { navigateTo(AppState.page, AppState.params); });
     $('#skip-link').addEventListener('click', function (e) { e.preventDefault(); $('#main').focus(); });
     showLogin('');
+    if (API_URL) {
+      try { var cm = JSON.parse(localStorage.getItem('dkppkb_merek') || 'null'); if (cm) { applyBrand(cm.nama, cm.sub); applyLogo(cm.logo); applyFavicon(cm.logo); } } catch (e) { }
+      call('apiMerek', []).then(function (r) {
+        if (!r || !r.success) return;
+        applyBrand(r.data.nama, r.data.sub); applyLogo(r.data.logo); applyFavicon(r.data.logo);
+        try { localStorage.setItem('dkppkb_merek', JSON.stringify(r.data)); } catch (e) { }
+      }).catch(function () { });
+      var tk = null; try { tk = sessionStorage.getItem(SESI_KEY); } catch (e) { }
+      if (tk) { AppState.sessionToken = tk; startApp().catch(function () { AppState.sessionToken = null; simpanSesi(null); showLogin(''); }); }
+    }
   }
   function refreshBadgeForPeriod() { /* lencana mengikuti bulan aktif konfigurasi; tidak berubah saat pratinjau periode */ }
 

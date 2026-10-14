@@ -43,7 +43,8 @@ const DEFAULT_PWD = { admin: 'admin123', pimpinan: 'pimpinan123', pic: 'pic123' 
 /* ---------------- Entry point tunggal ---------------- */
 
 /** Entry point TUNGGAL. Tidak ada routing berbasis ?page= atau token di URL. */
-function doGet() {
+function doGet(e) {
+  if (e && e.parameter && e.parameter.fn === 'merek') return jsonOut_(apiMerek());
   const t = HtmlService.createTemplateFromFile('Index');
   t.logoUrl = logoAman_();
   const mk = merekAman_();
@@ -53,6 +54,36 @@ function doGet() {
     .setTitle(APP_NAME)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/* ---------------- API JSON (dipakai tampilan statis, mis. GitHub Pages) ----------------
+ * Klien statis mengirim POST text/plain berisi {"fn":"nama","args":[...]} ke URL web app.
+ * Hanya fungsi pada daftar putih di bawah yang boleh dipanggil; otorisasi tetap lewat token sesi. */
+const API_JSON_ = ['apiMerek', 'doLogin', 'doLogout', 'getPageContent', 'apiBootstrap', 'apiAmbilIsian', 'apiSimpanIsian', 'apiVerifikasi', 'apiKirimPengingat',
+  'apiSimpanMasalah', 'apiUbahStatusMasalah', 'apiSimpanPermintaan', 'apiUbahStatusPermintaan', 'apiSimpanConfig', 'apiSimpanIndikator', 'apiSimpanProgram',
+  'apiSimpanTarget', 'apiSimpanUser', 'apiResetPassword', 'apiUbahStatusUser', 'apiUbahPassword', 'apiExportPdf', 'apiDaftarBukti', 'apiUnggahBukti',
+  'apiUnduhBukti', 'apiHapusBukti', 'apiTarikData'];
+
+function jsonOut_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj === undefined ? null : obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  let hasil;
+  try {
+    const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    const nama = String(body.fn || '');
+    if (API_JSON_.indexOf(nama) < 0 || typeof globalThis[nama] !== 'function') hasil = { success: false, expired: false, message: 'Fungsi tidak dikenal.' };
+    else hasil = globalThis[nama].apply(null, (Array.isArray(body.args) ? body.args : []).slice(0, 8));
+  } catch (err) {
+    hasil = { success: false, expired: false, message: 'Permintaan tidak valid.' };
+  }
+  return jsonOut_(hasil);
+}
+
+/** Nama, subjudul, dan logo aplikasi untuk halaman login (tanpa sesi). */
+function apiMerek() {
+  return run_(() => { const m = merekAman_(); return { nama: m.nama, sub: m.sub, logo: logoAman_() }; });
 }
 
 /** URL logo resmi (opsional) dari Config. Hanya https. Gagal membaca = pakai logo bawaan. */
