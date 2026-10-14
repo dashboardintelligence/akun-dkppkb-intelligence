@@ -1,8 +1,10 @@
 # Opsional: dorong kode ke Apps Script otomatis saat ada push ke branch main.
-# Butuh dua secret di repo (Settings > Secrets and variables > Actions):
-#   CLASPRC_JSON : isi file ~/.clasprc.json setelah 'clasp login' di komputer Anda
-#   SCRIPT_ID    : ID skrip Apps Script
-# Catatan: deployment web app tetap harus dibuat sebagai "New version" dari editor Apps Script.
+# Workflow ini DILEWATI (bukan gagal) bila secret belum diisi.
+# Untuk mengaktifkan, isi dua secret di Settings > Secrets and variables > Actions > Secrets:
+#   CLASPRC_JSON : seluruh isi file ~/.clasprc.json (Mac/Linux) atau %USERPROFILE%\.clasprc.json (Windows)
+#                  setelah menjalankan 'clasp login' di komputer Anda
+#   SCRIPT_ID    : ID skrip Apps Script (Apps Script > Setelan Proyek > ID skrip)
+# Catatan: deployment web app tetap harus dibuat sebagai "Versi baru" dari editor Apps Script.
 name: Dorong ke Apps Script
 on:
   push:
@@ -12,13 +14,33 @@ on:
 jobs:
   push:
     runs-on: ubuntu-latest
+    env:
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: npm i -g @google/clasp
-      - name: Siapkan kredensial
+      - name: Periksa secret
+        id: cek
         run: |
-          echo '${{ secrets.CLASPRC_JSON }}' > ~/.clasprc.json
-          echo '{"scriptId":"${{ secrets.SCRIPT_ID }}","rootDir":"src"}' > .clasp.json
-      - run: clasp push --force
+          if [ -z "$CLASPRC_JSON" ] || [ -z "$SCRIPT_ID" ]; then
+            echo "::notice::Secret CLASPRC_JSON / SCRIPT_ID belum diisi, push ke Apps Script dilewati. Lihat komentar di workflow ini."
+            echo "aktif=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "aktif=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.cek.outputs.aktif == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.cek.outputs.aktif == 'true'
+        with: { node-version: 20 }
+      - name: Siapkan kredensial
+        if: steps.cek.outputs.aktif == 'true'
+        run: |
+          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
+          node -e "JSON.parse(require('fs').readFileSync(process.env.HOME+'/.clasprc.json','utf8'))" \
+            || { echo "::error::CLASPRC_JSON bukan JSON yang valid. Salin ulang seluruh isi file .clasprc.json."; exit 1; }
+          printf '{"scriptId":"%s","rootDir":"src"}' "$SCRIPT_ID" > .clasp.json
+      - name: Pasang clasp dan dorong kode
+        if: steps.cek.outputs.aktif == 'true'
+        run: |
+          npm i -g @google/clasp
+          clasp push --force
