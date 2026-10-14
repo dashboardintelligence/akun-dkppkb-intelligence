@@ -73,13 +73,50 @@
   /** Panggil API ber-token. Mengembalikan data atau melempar Error; sesi habis -> kembali ke login. */
   var PCACHE = {}, READ_API = { apiBootstrap: 1, apiAmbilIsian: 1, apiDaftarBukti: 1, apiUnduhBukti: 1, apiTarikData: 1 };
   function api(fn, args) {
-    if (!READ_API[fn]) PCACHE = {};   // ada perubahan data: buang cache halaman
+    if (!READ_API[fn]) pcReset();   // ada perubahan data: buang cache halaman
     args = [AppState.sessionToken].concat(args || []);
     return call(fn, args).then(function (r) {
       if (r && r.success) return r.data;
       if (r && r.expired) { forceLogout(r.message); }
       var err = new Error((r && r.message) || 'Terjadi kesalahan.'); err.handled = !!(r && r.expired); throw err;
     });
+  }
+
+
+  /* ---------- percepatan: muat halaman lain di latar belakang ---------- */
+  var PGEN = 0, PREFETCHING = {}, keepTimer = null;
+  function pcReset() { PCACHE = {}; PGEN++; }
+  function prefetchPage(page, params) {
+    if (!AppState.sessionToken) return Promise.resolve();
+    var p = Object.assign({}, params || {}, periode());
+    var key = page + '|' + JSON.stringify(p);
+    if ((PCACHE[key] && Date.now() - PCACHE[key].t < 600000) || PREFETCHING[key]) return Promise.resolve();
+    var gen = PGEN, tok = AppState.sessionToken;
+    PREFETCHING[key] = 1;
+    return call('getPageContent', [tok, page, p]).then(function (r) {
+      if (r && r.success && !r.redirect && gen === PGEN && tok === AppState.sessionToken) PCACHE[key] = { html: r.html, title: r.title, t: Date.now() };
+    }).catch(function () { }).then(function () { delete PREFETCHING[key]; });
+  }
+  /** Muat semua menu satu per satu agar klik pertama pun terasa seketika. */
+  function prefetchMenu() {
+    var tok = AppState.sessionToken;
+    var ids = $$('.nav-item[data-nav]').map(function (b) { return b.getAttribute('data-nav'); }).filter(function (id) { return id !== AppState.page; });
+    (function next(i) {
+      if (i >= ids.length || AppState.sessionToken !== tok) return;
+      prefetchPage(ids[i]).then(function () { setTimeout(function () { next(i + 1); }, 150); });
+    })(0);
+  }
+  /** Ping ringan agar server Apps Script tetap hangat selama aplikasi dipakai. */
+  function startKeepAlive() {
+    if (keepTimer) return;
+    keepTimer = setInterval(function () {
+      if (!AppState.sessionToken) { clearInterval(keepTimer); keepTimer = null; return; }
+      if (document.hidden) return;
+      call('apiMerek', []).catch(function () { });
+    }, 240000);
+  }
+  function markMenu(page) {
+    $$('[data-menu]').forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-menu') === page); });
   }
 
   var toastTimer;
@@ -117,7 +154,7 @@
     setTimeout(function () { $('#login-user').focus(); }, 50);
   }
   function forceLogout(msg) {
-    PCACHE = {}; simpanSesi(null); AppState.sessionToken = null; AppState.user = null; AppState.hist = []; AppState.rendered = false; updBack();
+    pcReset(); simpanSesi(null); AppState.sessionToken = null; AppState.user = null; AppState.hist = []; AppState.rendered = false; updBack();
     closeModal(true); closeDrawer(); busy(false);
     showLogin(msg || 'Sesi berakhir. Silakan masuk kembali.');
   }
@@ -137,12 +174,12 @@
     return false;
   }
   function startApp() {
-    PCACHE = {};
+    pcReset();
     return api('apiBootstrap').then(function (d) {
       AppState.user = d.user; AppState.cfg = d.cfg; AppState.tahunList = d.tahunList;
       buildChrome(d);
       show($('#view-login'), false); show($('#view-app'), true);
-      return navigateTo('beranda', {});
+      return navigateTo('beranda', {}).then(function () { prefetchMenu(); startKeepAlive(); });
     });
   }
   /* Logo resmi (opsional, dari Config LogoUrl). Tanpa URL, dipakai emblem hijau bawaan. */
@@ -232,7 +269,7 @@
       if (AppState.hist.length > 30) AppState.hist.shift();
     }
     AppState.page = page; AppState.params = params;
-    updBack();
+    updBack(); markMenu(page);   // sorot menu seketika saat diklik
     closeDrawer(); busy(true);
     var c = $('#app-container');
     var p = Object.assign({}, params, periode());
@@ -792,6 +829,13 @@
     }
   }
 
+  /* muat lebih awal saat kursor di atas menu atau jari menyentuh menu */
+  ['mouseover', 'pointerdown', 'touchstart'].forEach(function (evn) {
+    document.addEventListener(evn, function (ev) {
+      var n = ev.target && ev.target.closest && ev.target.closest('[data-nav]');
+      if (n && AppState.sessionToken && n.getAttribute('data-nav') !== AppState.page && !n.getAttribute('data-params')) prefetchPage(n.getAttribute('data-nav'));
+    }, { passive: true });
+  });
   document.addEventListener('click', function (ev) {
     var t = ev.target;
     if (t.id === 'modal-back') { closeModal(); return; }
@@ -892,8 +936,8 @@
         '<div class="form-actions"><button class="btn btn-primary" type="button" data-nav="pengaturan">Pengaturan Akun</button><button class="btn btn-ghost" type="button" data-act="logout">Keluar</button></div>');
       if (window.DkTheme) window.DkTheme.refresh();
     });
-    $('#sel-bulan').addEventListener('change', function () { navigateTo(AppState.page, AppState.params); refreshBadgeForPeriod(); });
-    $('#sel-tahun').addEventListener('change', function () { navigateTo(AppState.page, AppState.params); });
+    $('#sel-bulan').addEventListener('change', function () { navigateTo(AppState.page, AppState.params).then(prefetchMenu); refreshBadgeForPeriod(); });
+    $('#sel-tahun').addEventListener('change', function () { navigateTo(AppState.page, AppState.params).then(prefetchMenu); });
     $('#skip-link').addEventListener('click', function (e) { e.preventDefault(); $('#main').focus(); });
     showLogin('');
     if (API_URL) {
