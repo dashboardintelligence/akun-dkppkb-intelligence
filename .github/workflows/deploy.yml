@@ -1,0 +1,24 @@
+# Opsional: dorong kode ke Apps Script otomatis saat ada push ke branch main.
+# Butuh dua secret di repo (Settings > Secrets and variables > Actions):
+#   CLASPRC_JSON : isi file ~/.clasprc.json setelah 'clasp login' di komputer Anda
+#   SCRIPT_ID    : ID skrip Apps Script
+# Catatan: deployment web app tetap harus dibuat sebagai "New version" dari editor Apps Script.
+name: Dorong ke Apps Script
+on:
+  push:
+    branches: [main]
+    paths: ['src/**']
+  workflow_dispatch:
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm i -g @google/clasp
+      - name: Siapkan kredensial
+        run: |
+          echo '${{ secrets.CLASPRC_JSON }}' > ~/.clasprc.json
+          echo '{"scriptId":"${{ secrets.SCRIPT_ID }}","rootDir":"src"}' > .clasp.json
+      - run: clasp push --force

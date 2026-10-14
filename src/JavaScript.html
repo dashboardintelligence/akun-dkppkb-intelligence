@@ -1,0 +1,888 @@
+<script>
+/* ============================================================
+ * DKPPKB Sulbar Intelligence — Client (SPA)
+ * - Token sesi hanya disimpan di AppState (memori), TIDAK di URL.
+ * - Navigasi: navigateTo(page, params) -> getPageContent -> injectPage.
+ * - Tanpa window.location / window.open / google.script.host.close.
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var AppState = { sessionToken: null, user: null, cfg: null, tahunList: [], page: 'beranda', params: {}, req: 0, pending: null, hist: [] };
+
+  var MENU = [
+    { id: 'beranda', label: 'Beranda', icon: 'dashboard', group: 'Utama' },
+    { id: 'inputdata', label: 'Input Data', icon: 'edit_note', group: 'Indikator', roles: ['admin', 'pic'] },
+    { id: 'indikator', label: 'Indikator Kesehatan', icon: 'monitor_heart', group: 'Indikator' },
+    { id: 'iku', label: 'IKU', icon: 'flag', group: 'Indikator' },
+    { id: 'spm', label: 'Indikator SPM', icon: 'rule', group: 'Indikator' },
+    { id: 'analitik', label: 'Capaian & Analitik', icon: 'insights', group: 'Analisis' },
+    { id: 'monitoring', label: 'Monitoring Pengisian', icon: 'fact_check', group: 'Analisis', badge: true },
+    { id: 'rekomendasi', label: 'Permasalahan & Rekomendasi', icon: 'lightbulb', group: 'Analisis' },
+    { id: 'laporan', label: 'Laporan Eksekutif', icon: 'description', group: 'Layanan', roles: ['admin', 'pimpinan'] },
+    { id: 'permintaan', label: 'Permintaan Data', icon: 'upload_file', group: 'Layanan' },
+    { id: 'tambahindikator', label: 'Tambah Indikator', icon: 'add_circle', group: 'Administrasi', roles: ['admin'] },
+    { id: 'pengguna', label: 'Kelola Pengguna', icon: 'group', group: 'Administrasi', roles: ['admin'] },
+    { id: 'pengaturan', label: 'Pengaturan', icon: 'settings', group: 'Lainnya' },
+    { id: 'panduan', label: 'Panduan Pengguna', icon: 'help', group: 'Lainnya' }
+  ];
+  var BOTTOM = [
+    { id: 'beranda', label: 'Beranda', icon: 'dashboard' },
+    { id: 'indikator', label: 'Indikator', icon: 'monitor_heart' },
+    { id: 'monitoring', label: 'Monitoring', icon: 'fact_check' },
+    { id: 'rekomendasi', label: 'Rekomendasi', icon: 'lightbulb' },
+    { id: '_menu', label: 'Menu', icon: 'menu' }
+  ];
+  var EMBLEM_SVG = '<svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><circle cx="16" cy="16" r="13.2" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="1.4"/><path d="M13 7h6v6h6v6h-6v6h-6v-6H7v-6h6z" fill="#fff"/></svg>';
+  var ROLE_LABEL = { admin: 'Administrator', pimpinan: 'Pimpinan', pic: 'PIC Bidang' };
+
+  /* ---------- util ---------- */
+  function $(s, r) { return (r || document).querySelector(s); }
+  function $$(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+  function show(el, on) { if (el) el.hidden = !on; }
+
+  function call(fn, args) {
+    return new Promise(function (resolve, reject) {
+      try {
+        var r = google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(function (e) { reject(new Error((e && e.message) || 'Koneksi ke server gagal. Periksa jaringan Anda.')); });
+        if (typeof r[fn] !== 'function') throw new Error('Fungsi "' + fn + '" tidak ditemukan di server. Pastikan file Halaman.gs sudah ditempel lengkap dan disimpan, lalu buat deployment versi baru.');
+        r[fn].apply(r, args || []);
+      } catch (e) { reject(e); }
+    });
+  }
+  /** Panggil API ber-token. Mengembalikan data atau melempar Error; sesi habis -> kembali ke login. */
+  var PCACHE = {}, READ_API = { apiBootstrap: 1, apiAmbilIsian: 1, apiDaftarBukti: 1, apiUnduhBukti: 1, apiTarikData: 1 };
+  function api(fn, args) {
+    if (!READ_API[fn]) PCACHE = {};   // ada perubahan data: buang cache halaman
+    args = [AppState.sessionToken].concat(args || []);
+    return call(fn, args).then(function (r) {
+      if (r && r.success) return r.data;
+      if (r && r.expired) { forceLogout(r.message); }
+      var err = new Error((r && r.message) || 'Terjadi kesalahan.'); err.handled = !!(r && r.expired); throw err;
+    });
+  }
+
+  var toastTimer;
+  function toast(msg, type) {
+    var t = $('#toast');
+    t.textContent = msg; t.className = 'toast ' + (type || ''); t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.hidden = true; }, 4200);
+  }
+  function busy(on) { show($('#loader'), on); }
+
+  /* ---------- modal ---------- */
+  var lastFocus = null;
+  function openModal(title, html, wide) {
+    closeModal(true);
+    lastFocus = document.activeElement;
+    var root = $('#modal-root');
+    root.innerHTML = '<div class="modal-back" id="modal-back"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"' + (wide ? ' style="max-width:760px"' : '') + '>' +
+      '<div class="modal-head"><h2 class="modal-title" id="modal-title">' + esc(title) + '</h2><button type="button" class="icon-btn" data-act="close-modal" aria-label="Tutup"><span class="ic" aria-hidden="true">close</span></button></div>' +
+      '<div id="modal-body">' + html + '</div></div></div>';
+    var f = $('#modal-body input:not([type=hidden]), #modal-body textarea, #modal-body select, #modal-body button', root);
+    setTimeout(function () { (f || $('.icon-btn', root)).focus(); }, 30);
+  }
+  function closeModal(silent) {
+    var root = $('#modal-root');
+    if (!root.firstChild) return;
+    root.innerHTML = '';
+    if (!silent && lastFocus && lastFocus.focus) { try { lastFocus.focus(); } catch (e) { } }
+  }
+
+  /* ---------- login / sesi ---------- */
+  function showLogin(msg) {
+    show($('#view-app'), false); show($('#view-login'), true);
+    $('#login-msg').textContent = msg || '';
+    $('#login-pass').value = '';
+    setTimeout(function () { $('#login-user').focus(); }, 50);
+  }
+  function forceLogout(msg) {
+    PCACHE = {}; AppState.sessionToken = null; AppState.user = null; AppState.hist = []; AppState.rendered = false; updBack();
+    closeModal(true); closeDrawer(); busy(false);
+    showLogin(msg || 'Sesi berakhir. Silakan masuk kembali.');
+  }
+  function doLoginSubmit(e) {
+    e.preventDefault();
+    var u = $('#login-user').value, p = $('#login-pass').value, btn = $('#login-btn'), msg = $('#login-msg');
+    msg.textContent = '';
+    if (!u.trim() || !p) { msg.textContent = 'Isi nama pengguna dan kata sandi.'; return false; }
+    btn.disabled = true; btn.textContent = 'Memeriksa…';
+    call('doLogin', [u, p]).then(function (r) {
+      if (!r || !r.success) throw new Error((r && r.message) || 'Gagal masuk.');
+      AppState.sessionToken = r.data.token;
+      return startApp();
+    }).catch(function (err) {
+      msg.textContent = err.message;
+    }).then(function () { btn.disabled = false; btn.textContent = 'Masuk'; });
+    return false;
+  }
+  function startApp() {
+    PCACHE = {};
+    return api('apiBootstrap').then(function (d) {
+      AppState.user = d.user; AppState.cfg = d.cfg; AppState.tahunList = d.tahunList;
+      buildChrome(d);
+      show($('#view-login'), false); show($('#view-app'), true);
+      return navigateTo('beranda', {});
+    });
+  }
+  /* Logo resmi (opsional, dari Config LogoUrl). Tanpa URL, dipakai emblem hijau bawaan. */
+  function applyLogo(url) {
+    if (!/^https:\/\/[^\s"'<>]+$/.test(url || '') && !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+\/=]+$/.test(url || '')) {
+      $$('.emblem[data-logo]').forEach(function (el) { el.removeAttribute('data-logo'); el.classList.remove('emblem-img'); el.innerHTML = EMBLEM_SVG; });
+      return;
+    }
+    $$('.emblem').forEach(function (el) {
+      if (el.getAttribute('data-logo') === url) return;
+      el.setAttribute('data-logo', url);
+      el.classList.add('emblem-img');
+      el.innerHTML = '';
+      var img = document.createElement('img');
+      img.alt = 'Logo'; img.decoding = 'async'; img.referrerPolicy = 'no-referrer';
+      img.onerror = function () { el.classList.remove('emblem-img'); el.removeAttribute('data-logo'); el.innerHTML = EMBLEM_SVG; };
+      img.src = url; el.appendChild(img);
+    });
+  }
+  /* Nama, subjudul, logo, dan ikon tab dari Pengaturan */
+  var BRAND = { nama: 'DKPPKB Sulbar', sub: 'Intelligence' };
+  function applyBrand(nama, sub) {
+    if (nama) BRAND.nama = nama;
+    if (sub !== undefined && sub !== null) BRAND.sub = sub;
+    var full = BRAND.nama + (BRAND.sub ? ' ' + BRAND.sub : '');
+    $$('[data-brand=full]').forEach(function (e) { e.textContent = full; });
+    $$('[data-brand=nama]').forEach(function (e) { e.textContent = BRAND.nama; });
+    $$('[data-brand=sub]').forEach(function (e) { e.textContent = BRAND.sub; e.hidden = !BRAND.sub; });
+    BRAND.full = full;
+    document.title = full;
+  }
+  function applyFavicon(url) {
+    var l = document.querySelector('link[rel=icon]'); if (!l) return;
+    if (!url) { if (l.getAttribute('data-asli')) l.setAttribute('href', l.getAttribute('data-asli')); return; }
+    if (!l.getAttribute('data-asli')) l.setAttribute('data-asli', l.getAttribute('href'));
+    l.setAttribute('href', url);
+  }
+  function buildChrome(d) {
+    if (d.cfg) applyBrand(d.cfg.namaApp, d.cfg.subApp);
+    applyFavicon(d.cfg && d.cfg.logo);
+    applyLogo(d.cfg && d.cfg.logo);
+    var u = AppState.user;
+    $('#user-name').textContent = u.nama; $('#user-role').textContent = ROLE_LABEL[u.role] || u.role;
+    $('#user-avatar').textContent = (u.nama || '?').charAt(0).toUpperCase();
+    var sb = $('#sel-bulan'), st = $('#sel-tahun');
+    sb.innerHTML = d.bulanList.map(function (b, i) { return '<option value="' + (i + 1) + '"' + (i + 1 === d.cfg.bulan ? ' selected' : '') + '>' + esc(b) + '</option>'; }).join('');
+    st.innerHTML = d.tahunList.map(function (t) { return '<option value="' + t + '"' + (t === d.cfg.tahun ? ' selected' : '') + '>' + t + '</option>'; }).join('');
+    var items = MENU.filter(function (m) { return !m.roles || m.roles.indexOf(u.role) >= 0; });
+    var html = '', g = '';
+    items.forEach(function (m) {
+      if (m.group !== g) { g = m.group; html += '<div class="nav-label">' + esc(g) + '</div>'; }
+      html += '<button type="button" class="nav-item" data-nav="' + m.id + '" data-menu="' + m.id + '"><span class="ic" aria-hidden="true">' + m.icon + '</span><span>' + esc(m.label) + '</span>' +
+        (m.badge ? '<span class="chip chip-warn nav-badge" id="nav-badge" hidden>0</span>' : '') + '</button>';
+    });
+    $('#nav-side').innerHTML = html;
+    $('#nav-bottom').innerHTML = BOTTOM.map(function (b) {
+      return '<button type="button" class="bn" ' + (b.id === '_menu' ? 'data-act="open-drawer"' : 'data-nav="' + b.id + '" data-menu="' + b.id + '"') + '><span class="ic" aria-hidden="true">' + b.icon + '</span><span>' + b.label + '</span></button>';
+    }).join('');
+    setBadge(d.badge);
+    show($('#banner-pwd'), !!d.passwordDefault);
+  }
+  function setBadge(n) {
+    var b = $('#notif-badge'), nb = $('#nav-badge');
+    b.textContent = n > 99 ? '99+' : n; b.hidden = !n;
+    if (nb) { nb.textContent = n; nb.hidden = !n; }
+  }
+  function refreshBadge() {
+    return api('apiBootstrap').then(function (d) { setBadge(d.badge); show($('#banner-pwd'), !!d.passwordDefault); }).catch(function () { });
+  }
+  function logout() {
+    var t = AppState.sessionToken;
+    if (t) call('doLogout', [t]).catch(function () { });
+    $('#app-container').innerHTML = '';
+    forceLogout('Anda telah keluar.');
+    $('#login-msg').textContent = '';
+  }
+
+  /* ---------- router SPA ---------- */
+  function periode() { return { tahun: Number($('#sel-tahun').value), bulan: Number($('#sel-bulan').value) }; }
+
+  function navigateTo(page, params, opts) {
+    if (!AppState.sessionToken) return Promise.resolve();
+    params = params || {};
+    var my = ++AppState.req;
+    if (!(opts && (opts.keep || opts.back || opts.redirect)) && AppState.rendered && page !== AppState.page) {
+      AppState.hist.push({ page: AppState.page, params: AppState.params });
+      if (AppState.hist.length > 30) AppState.hist.shift();
+    }
+    AppState.page = page; AppState.params = params;
+    updBack();
+    closeDrawer(); busy(true);
+    var c = $('#app-container');
+    var p = Object.assign({}, params, periode());
+    var ckey = page + '|' + JSON.stringify(p), hit = !(opts && (opts.keep || opts.redirect)) && PCACHE[ckey] && (Date.now() - PCACHE[ckey].t < 600000) ? PCACHE[ckey] : null;
+    if (hit) injectPage(page, hit.html, hit.title, opts);   // tampil seketika, lalu disegarkan di latar
+    else if (!(opts && opts.keep)) c.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
+    return call('getPageContent', [AppState.sessionToken, page, p]).then(function (r) {
+      if (my !== AppState.req) return;
+      busy(false);
+      if (!r) throw new Error('Respons kosong dari server.');
+      if (r.expired) return forceLogout(r.message);
+      if (!r.success) { c.innerHTML = '<div class="card card-pad empty"><span class="ic">cloud_off</span><p>' + esc(r.message || 'Gagal memuat halaman.') + '</p><button type="button" class="btn btn-primary" data-act="reload">Coba lagi</button></div>'; return; }
+      if (r.redirect) { if (r.message) toast(r.message, 'err'); return navigateTo(r.redirect, {}, { redirect: true }); }
+      var ckeys = Object.keys(PCACHE); if (ckeys.length > 30) delete PCACHE[ckeys[0]];
+      PCACHE[ckey] = { html: r.html, title: r.title, t: Date.now() };
+      if (hit) {
+        var ae = document.activeElement, sibuk = !!$('#modal-back') || (ae && c.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName));
+        if (r.html !== hit.html && !sibuk) injectPage(page, r.html, r.title, { keep: true });
+        return;
+      }
+      injectPage(page, r.html, r.title, opts);
+    }).catch(function (e) {
+      if (my !== AppState.req) return;
+      busy(false);
+      if (hit) return;
+      c.innerHTML = '<div class="card card-pad empty"><span class="ic">cloud_off</span><p>' + esc(e.message) + '</p><button type="button" class="btn btn-primary" data-act="reload">Coba lagi</button></div>';
+    });
+  }
+  function injectPage(page, html, title, opts) {
+    var keepY = opts && opts.keep ? window.scrollY : 0;
+    $('#app-container').innerHTML = html;
+    $('#topbar-title').textContent = title || '';
+    document.title = (title ? title + ' · ' : '') + (BRAND.full || 'DKPPKB Sulbar Intelligence');
+    $$('[data-menu]').forEach(function (b) { var on = b.getAttribute('data-menu') === page; b.classList.toggle('active', on); if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+    AppState.rendered = true; updBack();
+    window.scrollTo(0, keepY);
+    if (!(opts && opts.keep)) { try { $('#main').focus({ preventScroll: true }); } catch (e) { } }
+    var fib = $('#form-ind-baru'); if (fib) syncIndBaru(fib);
+    var ftk = $('#form-tarik'); if (ftk) syncTarik(ftk);
+    if (page === 'pengguna' && AppState.params && AppState.params.tambah) { delete AppState.params.tambah; openUserForm({}); }
+    if (AppState.pending) { var fn = AppState.pending; AppState.pending = null; fn(); }
+  }
+  function updBack() { var b = $('#btn-back'); if (b) b.hidden = !(AppState.sessionToken && AppState.rendered && (AppState.hist.length || AppState.page !== 'beranda')); }
+  function goBack() {
+    var prev = AppState.hist.pop();
+    if (prev) navigateTo(prev.page, prev.params, { back: true });
+    else navigateTo('beranda', {}, { back: true });
+  }
+  function reload() { return navigateTo(AppState.page, AppState.params, { keep: true }); }
+
+  /* ---------- drawer mobile ---------- */
+  function openDrawer() { $('#sidebar').classList.add('open'); show($('#scrim'), true); }
+  function closeDrawer() { $('#sidebar').classList.remove('open'); show($('#scrim'), false); }
+
+  /* ---------- form isian ---------- */
+  var BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  function angkaId(v) { return String(v === null || v === undefined ? '' : v).trim().replace(/\s/g, '').replace(',', '.'); }
+  var KET_INFO = { angka: 'Angka: nilai biasa (misalnya skor, indeks, atau rasio).', persen: 'Persen: isi dalam persen, misalnya 87,5 untuk 87,5%.', jumlah: 'Jumlah: total kasus, kejadian, atau satuan yang dicapai pada bulan ini.' };
+  function sinkIsian(form) {
+    var ket = form.keterangan.value;
+    $('#is-ket-info', form).textContent = KET_INFO[ket] || '';
+    $('#is-unit', form).textContent = ket === 'persen' ? '%' : (form.getAttribute('data-sat') && ket !== 'angka' ? form.getAttribute('data-sat') : '');
+  }
+  function openIsian(d) {
+    var p = periode();
+    openModal('Isi Data Indikator', '<p class="muted">Memuat…</p>');
+    api('apiAmbilIsian', [{ indikatorId: d.id, tahun: p.tahun, bulan: Number(d.bulan) }]).then(function (r) {
+      var opt = ['angka', 'jumlah', 'persen'].map(function (o) { return '<option value="' + o + '"' + (o === r.keterangan ? ' selected' : '') + '>' + o.charAt(0).toUpperCase() + o.slice(1) + '</option>'; }).join('');
+      $('#modal-body').innerHTML =
+        '<form id="form-isian" novalidate data-sat="' + esc(r.satuan) + '"><p class="muted sm" style="margin-bottom:12px"><b>' + esc(d.id) + '</b> · ' + esc(d.nama) + '<br>Periode ' + esc(BULAN[Number(d.bulan) - 1]) + ' ' + p.tahun + ' · tingkat provinsi</p>' +
+        '<input type="hidden" name="indikatorId" value="' + esc(d.id) + '"><input type="hidden" name="bulan" value="' + esc(d.bulan) + '"><input type="hidden" name="tahun" value="' + p.tahun + '">' +
+        '<div class="form-grid"><div class="field"><label for="is-ket">Satuan nilai</label><select class="input" id="is-ket" name="keterangan">' + opt + '</select></div>' +
+        '<div class="field"><label for="is-real">Realisasi provinsi <span id="is-unit" class="muted"></span></label><input class="input" id="is-real" name="realisasi" type="text" inputmode="decimal" autocomplete="off" required value="' + esc(r.realisasi === null ? String(d.real || '').replace('.', ',') : String(r.realisasi).replace('.', ',')) + '"></div></div>' +
+        '<p class="muted sm" id="is-ket-info" style="margin:-4px 0 14px"></p>' +
+        '<div class="field"><label for="is-an">Catatan analisis masalah</label><textarea class="input input-area" id="is-an" name="analisis" maxlength="800" rows="3" placeholder="Apa penyebab capaian belum optimal?">' + esc(r.analisis) + '</textarea></div>' +
+        '<div class="field"><label for="is-rek">Catatan rekomendasi</label><textarea class="input input-area" id="is-rek" name="rekomendasi" maxlength="800" rows="3" placeholder="Tindak lanjut yang disarankan">' + esc(r.rekomendasi) + '</textarea></div>' +
+        '<div class="field"><label for="is-cat">Catatan lain (opsional)</label><textarea class="input input-area" id="is-cat" name="catatan" maxlength="300" rows="2">' + esc(r.catatan) + '</textarea></div>' +
+        (AppState.user.role === 'pic' ? '<p class="muted sm">Isian PIC akan menunggu verifikasi admin.</p>' : '') +
+        '<div class="form-actions"><button class="btn btn-primary" type="submit">Simpan</button><button class="btn btn-ghost" type="button" data-act="close-modal">Batal</button></div><p class="form-msg" role="alert"></p></form>';
+      sinkIsian($('#form-isian'));
+    }).catch(function (e) { if (!e.handled) $('#modal-body').innerHTML = '<p class="form-msg err">' + esc(e.message) + '</p>'; });
+  }
+  function submitIsian(form) {
+    var msg = $('.form-msg', form), btn = $('button[type=submit]', form);
+    var raw = angkaId(form.realisasi.value);
+    if (raw === '' || isNaN(Number(raw)) || Number(raw) < 0) { msg.className = 'form-msg'; msg.textContent = 'Realisasi harus berupa angka nol atau lebih.'; form.realisasi.focus(); return; }
+    btn.disabled = true; btn.textContent = 'Menyimpan…'; msg.textContent = '';
+    api('apiSimpanIsian', [{ indikatorId: form.indikatorId.value, tahun: Number(form.tahun.value), bulan: Number(form.bulan.value), keterangan: form.keterangan.value, realisasi: Number(raw), analisis: form.analisis.value, rekomendasi: form.rekomendasi.value, catatan: form.catatan.value }])
+      .then(function (r) {
+        closeModal(true);
+        toast(r.status === 'Lengkap' ? 'Data tersimpan.' : r.status === 'Menunggu Verifikasi' ? 'Tersimpan, menunggu verifikasi admin.' : 'Tersimpan sebagai belum lengkap.', 'ok');
+        reload(); refreshBadge();
+      }).catch(function (e) { if (e.handled) return; msg.className = 'form-msg'; msg.textContent = e.message; btn.disabled = false; btn.textContent = 'Simpan'; });
+  }
+
+  /* ---------- pengingat ---------- */
+  function openRemind() {
+    var boxes = $$('.chk-remind');
+    if (!boxes.length) { toast('Tidak ada tunggakan untuk diingatkan.', ''); return; }
+    var ids = boxes.filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
+    if (!ids.length) { ids = boxes.map(function (b) { return b.value; }); boxes.forEach(function (b) { b.checked = true; }); }
+    openModal('Kirim Pengingat',
+      '<form id="form-remind" novalidate><p class="muted sm" style="margin-bottom:12px">' + ids.length + ' indikator tertunggak akan diingatkan kepada PIC masing-masing.</p>' +
+      '<div class="field"><label for="rm-pesan">Pesan</label><textarea class="input input-area" id="rm-pesan" name="pesan" maxlength="1000" rows="3">Mohon segera melengkapi isian indikator sebelum batas cut-off. Terima kasih.</textarea></div>' +
+      '<div class="check-list"><label class="pill-check"><input type="checkbox" name="email" checked><span>Kirim email</span></label><label class="pill-check"><input type="checkbox" name="prioritas"><span>Tandai prioritas</span></label></div>' +
+      '<input type="hidden" name="ids" value="' + esc(ids.join(',')) + '">' +
+      '<div class="form-actions"><button class="btn btn-alert" type="submit">Kirim</button><button class="btn btn-ghost" type="button" data-act="close-modal">Batal</button></div><p class="form-msg" role="alert"></p></form>');
+  }
+  function submitRemind(form) {
+    var msg = $('.form-msg', form), btn = $('button[type=submit]', form);
+    btn.disabled = true; btn.textContent = 'Mengirim…';
+    api('apiKirimPengingat', [{ ids: form.ids.value.split(','), pesan: form.pesan.value, email: form.email.checked, prioritas: form.prioritas.checked }]).then(function (r) {
+      var wa = (r.wa || []).filter(function (w) { return w.telp; }).map(function (w) {
+        var d = String(w.telp).replace(/[^0-9]/g, ''); if (d.charAt(0) === '0') d = '62' + d.slice(1);
+        return '<a class="btn btn-ghost btn-sm" target="_blank" rel="noopener" href="https://wa.me/' + d + '?text=' + encodeURIComponent(w.teks) + '">WhatsApp ' + esc(w.nama) + '</a>';
+      }).join(' ');
+      $('#modal-body').innerHTML = '<p><b>' + r.indikator + '</b> indikator untuk <b>' + r.pic + '</b> PIC. Email terkirim: <b>' + r.email + '</b>.</p>' +
+        (r.tanpaEmail && r.tanpaEmail.length ? '<p class="muted sm" style="margin-top:8px">Tanpa email / gagal: ' + esc(r.tanpaEmail.join(', ')) + '</p>' : '') +
+        (wa ? '<p class="muted sm" style="margin:12px 0 8px">Kirim juga lewat WhatsApp:</p><div class="stack">' + wa + '</div>' : '') +
+        '<div class="form-actions" style="margin-top:16px"><button class="btn btn-primary" type="button" data-act="close-modal">Selesai</button></div>';
+    }).catch(function (e) { if (e.handled) return; msg.className = 'form-msg'; msg.textContent = e.message; btn.disabled = false; btn.textContent = 'Kirim'; });
+  }
+
+  /* ---------- form umum (data-api) ---------- */
+  function formData(form) {
+    var o = {};
+    $$('input,select,textarea', form).forEach(function (el) {
+      if (!el.name || el.type === 'checkbox') return;
+      o[el.name] = el.value;
+    });
+    return o;
+  }
+  function submitGeneric(form) {
+    var fn = form.getAttribute('data-api'), msg = $('.form-msg', form), btn = $('button[type=submit]', form), o = formData(form), args;
+    msg.className = 'form-msg'; msg.textContent = '';
+    if (fn === 'apiUbahPassword') {
+      if (o.baru !== o.ulang) { msg.textContent = 'Pengulangan kata sandi tidak sama.'; return; }
+      args = [o.lama, o.baru];
+    } else {
+      if (fn === 'apiSimpanIndikator' || fn === 'apiSimpanUser') o.aktif = o.aktif !== 'false';
+      if (fn === 'apiSimpanIndikator') o.target = o.target;
+      args = [o];
+    }
+    var required = $$('[required]', form).filter(function (el) { return !String(el.value).trim(); });
+    $$('.invalid', form).forEach(function (el) { el.classList.remove('invalid'); });
+    if (required.length) { required.forEach(function (el) { el.classList.add('invalid'); }); msg.textContent = 'Lengkapi kolom yang wajib diisi.'; required[0].focus(); return; }
+    var label = btn.textContent; btn.disabled = true; btn.textContent = 'Menyimpan…';
+    api(fn, args).then(function (r) {
+      toast(fn === 'apiUbahPassword' ? 'Kata sandi diperbarui.' : (fn === 'apiSimpanIndikator' && r && r.id && o.baru ? 'Indikator ' + r.id + ' ditambahkan.' : 'Berhasil disimpan.'), 'ok');
+      form.reset();
+      var m = {
+        apiSimpanConfig: function () { return startApp(); }, // muat ulang periode & menu
+        apiUbahPassword: function () { return refreshBadge(); }
+      }[fn];
+      if (fn === 'apiSimpanConfig') { return refreshPeriod(); }
+      if (m) m();
+      return reload();
+    }).catch(function (e) { if (e.handled) return; msg.textContent = e.message; })
+      .then(function () { btn.disabled = false; btn.textContent = label; });
+  }
+  function refreshPeriod() {
+    return api('apiBootstrap').then(function (d) { AppState.cfg = d.cfg; AppState.tahunList = d.tahunList; buildChrome(d); return reload(); });
+  }
+
+
+  /* ---------- kelola pengguna (admin) ---------- */
+  function openUserForm(d) {
+    var tpl = $('#tpl-user-form'); if (!tpl) return;
+    var edit = !!d.username;
+    openModal(edit ? 'Ubah Pengguna' : 'Tambah Pengguna', tpl.innerHTML);
+    var f = $('#form-user-modal'); if (!f) return;
+    f.setAttribute('data-baru', edit ? '' : '1');
+    var ps = f.elements.program;
+    f._prog = $$('option[data-bidang]', ps).map(function (o) { return { v: o.value, t: o.textContent, b: o.getAttribute('data-bidang') }; });
+    f._ikPilih = (d.indikator || []).slice();
+    if (edit) {
+      ['nama', 'username', 'role', 'bidang', 'email', 'telepon'].forEach(function (k) { if (f.elements[k]) f.elements[k].value = d[k] == null ? '' : d[k]; });
+      f.elements.aktif.value = String(d.aktif !== false);
+      f.elements.username.readOnly = true;
+    } else {
+      ['role', 'bidang'].forEach(function (k) { if (d[k] && f.elements[k]) f.elements[k].value = d[k]; });
+    }
+    show($('[data-sandi-baru]', f), !edit);
+    show($('[data-sandi-ubah]', f), edit);
+    syncUserForm(f, d.program || '');
+    $$('input[name=ik]', f).forEach(function (c) { c.checked = f._ikPilih.indexOf(c.value) >= 0; });
+    syncIk(f);
+  }
+  /* daftar indikator yang diinput PIC: hanya indikator di bidang terpilih */
+  function syncIk(f) {
+    var pic = f.elements.role.value === 'pic', bd = f.elements.bidang.value, n = 0;
+    $$('.ik-item', f).forEach(function (it) {
+      var cocok = it.getAttribute('data-bidang') === bd;
+      it.hidden = !cocok;
+      var c = $('input', it);
+      if (!cocok) c.checked = false; else if (c.checked) n++;
+    });
+    show($('[data-ik-wrap]', f), pic && !!bd);
+    var info = $('[data-ik-info]', f); if (info) info.textContent = n ? '· ' + n + ' dipilih' : '· belum dipilih (semua indikator cakupan)';
+    var bp = $('[data-ik-prog]', f); if (bp) bp.hidden = !f.elements.program.value;
+  }
+  /* isi form Tambah Indikator dari katalog dan batasi program/PIC sesuai bidang */
+  function filterBidangOpts(sel, bd) {
+    $$('option[data-bidang]', sel).forEach(function (o) { var ok = !bd || o.getAttribute('data-bidang') === bd; o.hidden = !ok; o.disabled = !ok; });
+    var cur = sel.options[sel.selectedIndex]; if (cur && cur.disabled) sel.value = '';
+  }
+  function syncIndBaru(f) {
+    var bd = f.elements.bidang.value;
+    filterBidangOpts(f.elements.program, bd); filterBidangOpts(f.elements.pic, bd);
+  }
+  function pakaiKatalog(d) {
+    var f = $('#form-ind-baru'); if (!f) return;
+    ['nama', 'bidang', 'jenis', 'frekuensi', 'satuan', 'target', 'arah'].forEach(function (k) { if (f.elements[k] && d[k] != null) f.elements[k].value = d[k]; });
+    f.elements.program.value = ''; f.elements.pic.value = '';
+    syncIndBaru(f);
+    var m = $('.form-msg', f); m.className = 'form-msg'; m.textContent = '';
+    f.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    f.elements.target.focus();
+  }
+  function syncUserForm(f, pilih) {
+    var pic = f.elements.role.value === 'pic', baru = !!f.getAttribute('data-baru');
+    var ps = f.elements.program, bd = f.elements.bidang.value, cur = pilih !== undefined ? pilih : ps.value;
+    ps.innerHTML = '<option value="">— Seluruh bidang (PIC Bidang) —</option>' + (f._prog || []).filter(function (o) { return o.b === bd; }).map(function (o) { return '<option value="' + esc(o.v) + '">' + esc(o.t) + '</option>'; }).join('');
+    ps.value = (f._prog || []).some(function (o) { return o.v === cur && o.b === bd; }) ? cur : '';
+    show($('[data-program-wrap]', f), pic && !!bd);
+    show($('[data-bidang-wrap]', f), pic);
+    syncIk(f);
+    show($('[data-sandi-manual]', f), baru && f.elements.modeSandi.value === 'manual');
+  }
+  /* ---------- unduh berkas dari base64 ---------- */
+  function unduhB64(nama, base64, mime) {
+    var bin = atob(base64), arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    var url = URL.createObjectURL(new Blob([arr], { type: mime || 'application/octet-stream' }));
+    var a = document.createElement('a'); a.href = url; a.download = nama; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+  function ukuranTeks(b) { return b >= 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB'; }
+
+  /* ---------- tarik data (pilih bidang / indikator) ---------- */
+  function syncTarik(f) {
+    var bd = $$('input[name=tk-bidang]', f).filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
+    var tampil = 0, dipilih = 0;
+    $$('.ik-item[data-bidang]', f).forEach(function (it) {
+      var ok = !bd.length || bd.indexOf(it.getAttribute('data-bidang')) >= 0;
+      it.hidden = !ok;
+      var c = $('input', it);
+      if (!ok) c.checked = false; else { tampil++; if (c.checked) dipilih++; }
+    });
+    var info = $('[data-tk-info]', f);
+    if (info) info.textContent = 'Akan menarik ' + (dipilih || tampil) + ' indikator' + (dipilih ? ' (dipilih satu per satu)' : bd.length ? ' dari ' + bd.length + ' bidang' : ' (semua)') + '.';
+  }
+  function tarikData(el) {
+    var f = $('#form-tarik'), msg = $('.form-msg', f), fmt = el.getAttribute('data-format'), p = periode();
+    var o = {
+      tahun: p.tahun, bulan: p.bulan, format: fmt,
+      bidang: $$('input[name=tk-bidang]', f).filter(function (c) { return c.checked; }).map(function (c) { return c.value; }),
+      indikator: $$('input[name=tk-ik]', f).filter(function (c) { return c.checked && !c.closest('[hidden]'); }).map(function (c) { return c.value; })
+    };
+    msg.className = 'form-msg'; msg.textContent = '';
+    var lama = el.innerHTML; el.disabled = true; el.textContent = 'Menyiapkan…';
+    api('apiTarikData', [o]).then(function (r) { unduhB64(r.nama, r.base64, r.mime); toast(r.jumlah + ' indikator diunduh (' + r.nama + ').', 'ok'); })
+      .catch(function (e) { if (!e.handled) { msg.textContent = e.message; } })
+      .then(function () { el.disabled = false; el.innerHTML = lama; });
+  }
+
+  /* ---------- bukti indikator (unggah dokumen ke Google Drive) ---------- */
+  var BULAN_NAMA = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  function openBukti(id, nama) {
+    openModal('Bukti Indikator', '<div class="bk"><p class="bk-head"><b>' + esc(id) + '</b> ' + esc(nama || '') + '</p><div id="bk-isi"><p class="muted">Memuat…</p></div></div>');
+    loadBukti(id);
+  }
+  function loadBukti(id) {
+    api('apiDaftarBukti', [id]).then(function (r) {
+      var box = $('#bk-isi'); if (!box) return;
+      var h = r.daftar.length ? '<ul class="bk-list">' + r.daftar.map(function (b) {
+        return '<li class="bk-item"><span class="bk-ext">' + esc(b.tipe) + '</span><div class="bk-main"><b>' + esc(b.nama) + '</b><span class="muted sm">' +
+          (b.bulan ? BULAN_NAMA[b.bulan - 1] + ' ' + b.tahun : 'Umum ' + (b.tahun || '')) + ' · ' + ukuranTeks(b.ukuran) + ' · ' + esc(b.oleh) + ' · ' + esc(b.pada) + '</span>' + (b.catatan ? '<span class="sm">' + esc(b.catatan) + '</span>' : '') + '</div>' +
+          '<div class="bk-act"><button type="button" class="btn btn-ghost btn-sm" data-act="bukti-unduh" data-id="' + esc(b.id) + '">Unduh</button>' +
+          (b.bisaHapus ? '<button type="button" class="btn btn-ghost btn-sm" data-act="bukti-hapus" data-id="' + esc(b.id) + '" data-ind="' + esc(id) + '">Hapus</button>' : '') + '</div></li>';
+      }).join('') + '</ul>' : '<p class="muted">Belum ada dokumen bukti untuk indikator ini.</p>';
+      if (r.bisaUnggah) {
+        h += '<form id="form-bukti" novalidate data-ind="' + esc(id) + '" data-maks="' + r.maksMB + '"><h4 class="h4">Unggah bukti baru</h4>' +
+          '<div class="field"><label for="bk-file">Berkas (PDF, gambar, Word, Excel, PowerPoint, CSV, TXT; maks. ' + r.maksMB + ' MB)</label><input class="input" id="bk-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt" required></div>' +
+          '<div class="form-grid"><div class="field"><label for="bk-bulan">Untuk bulan</label><select class="input" id="bk-bulan"><option value="0">Umum / seluruh tahun</option>' + BULAN_NAMA.map(function (n, i) { return '<option value="' + (i + 1) + '">' + n + '</option>'; }).join('') + '</select></div>' +
+          '<div class="field"><label for="bk-cat">Keterangan (opsional)</label><input class="input" id="bk-cat" type="text" maxlength="300" autocomplete="off"></div></div>' +
+          '<div class="form-actions"><button class="btn btn-primary" type="submit">Unggah Bukti</button><button type="button" class="btn btn-ghost" data-act="close-modal">Tutup</button></div><p class="form-msg" role="alert"></p></form>';
+        box.innerHTML = h;
+        var sb = $('#bk-bulan'); if (sb) sb.value = String(periode().bulan);
+      } else box.innerHTML = h + '<div class="form-actions"><button type="button" class="btn btn-ghost" data-act="close-modal">Tutup</button></div>';
+    }).catch(function (e) { var box = $('#bk-isi'); if (box && !e.handled) box.innerHTML = '<p class="form-msg err">' + esc(e.message) + '</p>'; });
+  }
+  function submitBukti(f) {
+    var msg = $('.form-msg', f), btn = $('button[type=submit]', f), file = $('#bk-file').files[0], id = f.getAttribute('data-ind');
+    msg.className = 'form-msg'; msg.textContent = '';
+    if (!file) { msg.textContent = 'Pilih berkas yang akan diunggah.'; return; }
+    var maks = Number(f.getAttribute('data-maks')) * 1048576;
+    if (file.size > maks) { msg.textContent = 'Ukuran berkas ' + ukuranTeks(file.size) + ' melebihi batas ' + ukuranTeks(maks) + '.'; return; }
+    var label = btn.textContent; btn.disabled = true; btn.textContent = 'Mengunggah…';
+    var fr = new FileReader();
+    fr.onerror = function () { msg.textContent = 'Berkas tidak dapat dibaca.'; btn.disabled = false; btn.textContent = label; };
+    fr.onload = function () {
+      var b64 = String(fr.result).split(',')[1] || '';
+      api('apiUnggahBukti', [{ indikatorId: id, tahun: periode().tahun, bulan: Number($('#bk-bulan').value), nama: file.name, base64: b64, catatan: $('#bk-cat').value }])
+        .then(function () { toast('Bukti diunggah.', 'ok'); loadBukti(id); reload(); })
+        .catch(function (e) { if (e.handled) return; msg.textContent = e.message; btn.disabled = false; btn.textContent = label; });
+    };
+    fr.readAsDataURL(file);
+  }
+  function hapusBukti(el) {
+    if (!el.getAttribute('data-yakin')) { el.setAttribute('data-yakin', '1'); el.textContent = 'Yakin hapus?'; el.classList.add('btn-danger'); return; }
+    el.disabled = true;
+    api('apiHapusBukti', [el.getAttribute('data-id')]).then(function () { toast('Bukti dihapus.', 'ok'); loadBukti(el.getAttribute('data-ind')); reload(); })
+      .catch(function (e) { if (!e.handled) toast(e.message, 'err'); el.disabled = false; });
+  }
+
+  /* ---------- logo: unggah gambar dan perkecil di browser ---------- */
+  function perkecilLogo(file, selesai, gagal) {
+    var fr = new FileReader();
+    fr.onerror = function () { gagal('Gambar tidak dapat dibaca.'); };
+    fr.onload = function () {
+      var img = new Image();
+      img.onerror = function () { gagal('File bukan gambar yang valid.'); };
+      img.onload = function () {
+        var sisi = [256, 192, 128, 96], i = 0;
+        (function coba() {
+          var skala = Math.min(1, sisi[i] / Math.max(img.width, img.height));
+          var c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.width * skala)); c.height = Math.max(1, Math.round(img.height * skala));
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          var out = c.toDataURL('image/png');
+          if (out.length > 44000) out = c.toDataURL('image/webp', 0.82);
+          if (out.length > 44000) out = c.toDataURL('image/jpeg', 0.8);
+          if (out.length <= 44000 && /^data:image\/(png|jpeg|webp);base64,/.test(out)) return selesai(out);
+          if (++i < sisi.length) return coba();
+          gagal('Gambar terlalu rumit untuk diperkecil. Pakai logo yang lebih sederhana.');
+        })();
+      };
+      img.src = String(fr.result);
+    };
+    fr.readAsDataURL(file);
+  }
+  function setLogoPreview(url) {
+    var pv = $('#logo-prev'); if (!pv) return;
+    if (url) { pv.innerHTML = ''; var im = document.createElement('img'); im.alt = 'Pratinjau logo'; im.src = url; pv.appendChild(im); }
+    else pv.innerHTML = pv.getAttribute('data-default') || '';
+  }
+
+  /* ---------- program (admin) ---------- */
+  function openProgramForm(d) {
+    var tpl = $('#tpl-program-form'); if (!tpl) return;
+    var edit = !!d.id;
+    openModal(edit ? 'Ubah Program' : 'Tambah Program', tpl.innerHTML);
+    var f = $('#form-program-modal'); if (!f) return;
+    if (edit) {
+      ['id', 'nama', 'bidang', 'sub'].forEach(function (k) { if (f.elements[k]) f.elements[k].value = d[k] == null ? '' : d[k]; });
+      f.elements.aktif.value = String(d.aktif !== false);
+    }
+    var n = f.elements.nama; if (n) n.focus();
+  }
+  function submitProgramForm(f) {
+    var msg = $('.form-msg', f), btn = $('button[type=submit]', f);
+    var o = { id: f.elements.id.value, nama: f.elements.nama.value.trim(), bidang: f.elements.bidang.value, sub: f.elements.sub.value.trim(), aktif: f.elements.aktif.value !== 'false' };
+    msg.className = 'form-msg'; msg.textContent = '';
+    if (o.nama.length < 3) { msg.textContent = 'Nama program minimal 3 huruf.'; f.elements.nama.focus(); return; }
+    if (!o.bidang) { msg.textContent = 'Pilih bidang untuk program ini.'; f.elements.bidang.focus(); return; }
+    btn.disabled = true; btn.textContent = 'Menyimpan…';
+    api('apiSimpanProgram', [o]).then(function () { closeModal(); toast('Program disimpan.', 'ok'); reload(); })
+      .catch(function (e) { if (e.handled) return; msg.textContent = e.message; btn.disabled = false; btn.textContent = 'Simpan Program'; });
+  }
+
+  /* ---------- input target per periode (admin) ---------- */
+  function submitTarget(f) {
+    var msg = $('.form-msg', f), btn = $('button[type=submit]', f), items = [], bad = null;
+    $$('.tgt-in', f).forEach(function (el) {
+      var v = el.value.trim(), o = el.getAttribute('data-orig');
+      if (v === o) return;
+      if (v !== '' && (isNaN(Number(v)) || Number(v) < 0)) { bad = bad || el; el.classList.add('invalid'); return; }
+      el.classList.remove('invalid');
+      items.push({ id: el.getAttribute('data-id'), periode: el.getAttribute('data-per'), target: v === '' ? '' : Number(v) });
+    });
+    msg.className = 'form-msg'; msg.textContent = '';
+    if (bad) { msg.textContent = 'Target harus berupa angka nol atau lebih.'; bad.focus(); return; }
+    if (!items.length) { msg.textContent = 'Belum ada perubahan untuk disimpan.'; return; }
+    var label = btn.textContent; btn.disabled = true; btn.textContent = 'Menyimpan…';
+    api('apiSimpanTarget', [{ tahun: Number(f.getAttribute('data-tahun')), items: items }]).then(function (r) {
+      toast(r.disimpan + ' target disimpan' + (r.dihapus ? ', ' + r.dihapus + ' dikosongkan' : '') + '.', 'ok');
+      return reload();
+    }).catch(function (e) { if (e.handled) return; msg.textContent = e.message; btn.disabled = false; btn.textContent = label; });
+  }
+
+  function submitUserForm(f) {
+    var msg = $('.form-msg', f), btn = $('button[type=submit]', f), baru = !!f.getAttribute('data-baru');
+    var pic = f.elements.role.value === 'pic';
+    var o = {
+      baru: baru, username: f.elements.username.value.trim().toLowerCase(), nama: f.elements.nama.value.trim(), role: f.elements.role.value,
+      bidang: pic ? f.elements.bidang.value : '', program: pic ? f.elements.program.value : '', indikator: pic ? $$('input[name=ik]', f).filter(function (c) { return c.checked && !c.closest('[hidden]'); }).map(function (c) { return c.value; }) : [], email: f.elements.email.value.trim(), telepon: f.elements.telepon.value.trim(),
+      aktif: f.elements.aktif.value !== 'false', modeSandi: f.elements.modeSandi.value,
+      password: baru ? f.elements.password.value : f.elements.passwordUbah.value
+    };
+    msg.className = 'form-msg'; msg.textContent = '';
+    $$('.invalid', f).forEach(function (el) { el.classList.remove('invalid'); });
+    function bad(el, t) { if (el) el.classList.add('invalid'); msg.textContent = t; if (el) el.focus(); }
+    if (!o.nama) return bad(f.elements.nama, 'Nama lengkap wajib diisi.');
+    if (!/^[a-z0-9._\-]{3,40}$/.test(o.username)) return bad(f.elements.username, 'Nama pengguna 3–40 karakter: huruf kecil, angka, titik, atau strip.');
+    if (pic && !o.bidang) return bad(f.elements.bidang, 'PIC wajib memilih bidang.');
+    if (o.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(o.email)) return bad(f.elements.email, 'Format email tidak valid.');
+    if (baru && o.modeSandi === 'manual' && o.password.length < 8) return bad(f.elements.password, 'Kata sandi minimal 8 karakter.');
+    if (!baru && o.password && o.password.length < 8) return bad(f.elements.passwordUbah, 'Kata sandi baru minimal 8 karakter.');
+    btn.disabled = true; btn.textContent = 'Menyimpan…';
+    api('apiSimpanUser', [o]).then(function (r) {
+      reload();
+      if (r.password) showCredential(r, 'Pengguna berhasil dibuat');
+      else if (baru) { showCredential(r, 'Pengguna berhasil dibuat'); }
+      else { closeModal(); toast('Perubahan disimpan.', 'ok'); }
+    }).catch(function (e) { if (e.handled) return; msg.textContent = e.message; btn.disabled = false; btn.textContent = 'Simpan Pengguna'; });
+  }
+  function showCredential(r, judul) {
+    var teks = 'Akses ' + (AppState.cfg && AppState.cfg.namaDinas ? 'aplikasi ' + (BRAND.full || 'DKPPKB Sulbar Intelligence') : 'aplikasi') + '\nNama pengguna: ' + r.username + (r.password ? '\nKata sandi sementara: ' + r.password : '') + '\nSegera ganti kata sandi di menu Pengaturan setelah masuk.';
+    var d = String(r.telepon || '').replace(/[^0-9]/g, ''); if (d.charAt(0) === '0') d = '62' + d.slice(1);
+    var wa = d ? '<a class="btn btn-ghost" target="_blank" rel="noopener" href="https://wa.me/' + d + '?text=' + encodeURIComponent(teks) + '"><span class="ic" aria-hidden="true">chat</span>Kirim lewat WhatsApp</a>' : '';
+    openModal(judul,
+      '<p><b>' + esc(r.nama) + '</b> sudah bisa masuk dengan data berikut.</p>' +
+      '<div class="cred"><div><span class="muted sm">Nama pengguna</span><code>' + esc(r.username) + '</code></div>' +
+      (r.password ? '<div><span class="muted sm">Kata sandi sementara</span><code>' + esc(r.password) + '</code></div>' : '') + '</div>' +
+      (r.password ? '<p class="muted sm" style="margin-top:12px">Catat atau salin sekarang. Kata sandi ini <b>tidak akan ditampilkan lagi</b>. Minta pengguna menggantinya setelah masuk.</p>' : '') +
+      '<div class="form-actions"><button class="btn btn-primary" type="button" data-act="copy-cred" data-text="' + encodeURIComponent(teks) + '"><span class="ic" aria-hidden="true">content_copy</span>Salin</button>' + wa +
+      '<button class="btn btn-ghost" type="button" data-act="close-modal">Selesai</button></div>');
+  }
+  function copyText(t) {
+    function fallback() {
+      var ta = document.createElement('textarea'); ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      var ok = false; try { ok = document.execCommand('copy'); } catch (e) { }
+      document.body.removeChild(ta);
+      toast(ok ? 'Tersalin.' : 'Gagal menyalin. Blok dan salin manual.', ok ? 'ok' : '');
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(function () { toast('Tersalin.', 'ok'); }, fallback);
+    else fallback();
+  }
+  function confirmUser(judul, isi, act, username, label) {
+    openModal(judul, '<p>' + isi + '</p><div class="form-actions"><button class="btn btn-alert" type="button" data-act="' + act + '" data-username="' + esc(username) + '">' + esc(label) + '</button><button class="btn btn-ghost" type="button" data-act="close-modal">Batal</button></div>');
+  }
+  function doUserReset(username) {
+    api('apiResetPassword', [username]).then(function (r) { showCredential(r, 'Kata sandi direset'); reload(); })
+      .catch(function (e) { if (e.handled) return; closeModal(); toast(e.message); });
+  }
+  function doUserStatus(username, aktif) {
+    api('apiUbahStatusUser', [username, aktif]).then(function () { closeModal(); toast(aktif ? 'Pengguna diaktifkan.' : 'Pengguna dinonaktifkan.', 'ok'); return reload(); })
+      .catch(function (e) { if (e.handled) return; closeModal(); toast(e.message); });
+  }
+
+  /* ---------- aksi (delegasi klik) ---------- */
+  function fillForm(formId, data) {
+    var f = $('#' + formId); if (!f) return;
+    f.reset();
+    Object.keys(data).forEach(function (k) {
+      var el = f.elements[k]; if (!el) return;
+      el.value = typeof data[k] === 'boolean' ? String(data[k]) : (data[k] == null ? '' : data[k]);
+    });
+    f.hidden = false;
+    f.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    var first = f.elements[0]; if (first && first.type !== 'hidden') setTimeout(function () { first.focus(); }, 250);
+  }
+
+  function onAction(el, ev) {
+    var act = el.getAttribute('data-act');
+    switch (act) {
+      case 'close-modal': closeModal(); break;
+      case 'theme': window.DkTheme.next(); break;
+      case 'reload': navigateTo(AppState.page, AppState.params); break;
+      case 'open-drawer': openDrawer(); break;
+      case 'detail': {
+        var src = $('.detail-src', el); if (!src) break;
+        var nama = $('.ir-name', el);
+        openModal(nama ? nama.textContent : 'Detail Indikator', src.innerHTML, true);
+        break;
+      }
+      case 'isian': openIsian({ id: el.dataset.id, bulan: el.dataset.bulan, nama: el.dataset.nama, satuan: el.dataset.satuan, real: el.dataset.real, kab: el.dataset.kab, cat: el.dataset.cat }); break;
+      case 'remind-open': openRemind(); break;
+      case 'bukti': openBukti(el.getAttribute('data-id'), el.getAttribute('data-nama')); break;
+      case 'bukti-unduh': {
+        var lb = el.textContent; el.disabled = true; el.textContent = 'Menyiapkan…';
+        api('apiUnduhBukti', [el.getAttribute('data-id')]).then(function (r) { unduhB64(r.nama, r.base64, r.mime); })
+          .catch(function (e) { if (!e.handled) toast(e.message, 'err'); }).then(function () { el.disabled = false; el.textContent = lb; });
+        break;
+      }
+      case 'bukti-hapus': hapusBukti(el); break;
+      case 'tarik': tarikData(el); break;
+      case 'tk-all': case 'tk-none': { var ft = $('#form-tarik'); $$('input[name=tk-ik]', ft).forEach(function (c) { if (!c.closest('[hidden]')) c.checked = act === 'tk-all'; }); syncTarik(ft); break; }
+      case 'logo-pilih': { var lf = $('#logo-file'); if (lf) lf.click(); break; }
+      case 'logo-hapus': {
+        var fc = $('#form-config'); if (!fc) break;
+        fc.elements.logoData.value = ''; fc.elements.logoKeep.value = ''; fc.elements.logoUrl.value = ''; setLogoPreview('');
+        var li = $('#logo-info'); if (li) li.textContent = 'Logo bawaan akan dipakai setelah Anda menekan Simpan Konfigurasi.';
+        break;
+      }
+      case 'ik-all': case 'ik-none': { var fu = el.closest('form'); $$('.ik-item', fu).forEach(function (it) { if (!it.hidden) $('input', it).checked = act === 'ik-all'; }); syncIk(fu); break; }
+      case 'ik-prog': { var fp = el.closest('form'), pv = fp.elements.program.value; $$('.ik-item', fp).forEach(function (it) { if (!it.hidden && it.getAttribute('data-program') === pv) $('input', it).checked = true; }); syncIk(fp); break; }
+      case 'ind-pakai': pakaiKatalog(JSON.parse(el.getAttribute('data-json') || '{}')); break;
+      case 'ind-baru-reset': { var fb = $('#form-ind-baru'); if (fb) { fb.reset(); syncIndBaru(fb); } break; }
+      case 'program-form': openProgramForm(JSON.parse(el.getAttribute('data-json') || '{}')); break;
+      case 'user-form': openUserForm(JSON.parse(el.getAttribute('data-json') || '{}')); break;
+      case 'user-reset': confirmUser('Reset kata sandi', 'Buat kata sandi sementara baru untuk <b>' + esc(el.dataset.nama) + '</b>? Kata sandi lama tidak berlaku lagi dan sesi aktifnya diakhiri.', 'user-reset-go', el.dataset.username, 'Buat kata sandi baru'); break;
+      case 'user-reset-go': doUserReset(el.dataset.username); break;
+      case 'user-status':
+        if (el.dataset.aktif === 'false') confirmUser('Nonaktifkan pengguna', '<b>' + esc(el.dataset.nama) + '</b> tidak akan bisa masuk lagi dan sesi yang sedang berjalan diakhiri. Riwayat isian tetap tersimpan.', 'user-off-go', el.dataset.username, 'Nonaktifkan');
+        else doUserStatus(el.dataset.username, true);
+        break;
+      case 'user-off-go': doUserStatus(el.dataset.username, false); break;
+      case 'copy-cred': copyText(decodeURIComponent(el.dataset.text || '')); break;
+      case 'toggle-form': {
+        var t = document.getElementById(el.getAttribute('data-target')); if (!t) break;
+        t.hidden = !t.hidden;
+        if (!t.hidden) { t.scrollIntoView({ behavior: 'smooth', block: 'start' }); var i = $('input:not([type=hidden]),textarea,select', t); if (i) setTimeout(function () { i.focus(); }, 250); }
+        break;
+      }
+      case 'prefill-masalah': {
+        var d = { id: el.dataset.ind, bidang: el.dataset.bidang };
+        closeModal(true);
+        var apply = function () {
+          var card = $('#form-masalah-card'), f = $('#form-masalah'); if (!f) return;
+          card.hidden = false; f.reset();
+          if (f.indikatorId) f.indikatorId.value = d.id;
+          if (f.bidang) f.bidang.value = d.bidang;
+          card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          if (f.permasalahan) setTimeout(function () { f.permasalahan.focus(); }, 250);
+        };
+        if (AppState.page === 'rekomendasi') apply(); else { AppState.pending = apply; navigateTo('rekomendasi', {}); }
+        break;
+      }
+      case 'edit-ind': { var di = JSON.parse(el.getAttribute('data-json') || '{}'); fillForm('form-indikator', di); var fi = $('#form-indikator'); if (fi && fi.id) fi.elements.id.readOnly = !!di.id; if (fi && !di.id) { fi.elements.satuan.value = '%'; fi.elements.id.readOnly = false; } break; }
+      case 'verif':
+        el.disabled = true;
+        api('apiVerifikasi', [{ indikatorId: el.dataset.id, bulan: Number(el.dataset.bulan), tahun: periode().tahun, setuju: el.dataset.setuju === '1' }])
+          .then(function () { toast(el.dataset.setuju === '1' ? 'Isian disetujui.' : 'Isian dikembalikan.', 'ok'); reload(); refreshBadge(); })
+          .catch(function (e) { if (!e.handled) toast(e.message, 'err'); el.disabled = false; });
+        break;
+      case 'masalah-status':
+        el.disabled = true;
+        api('apiUbahStatusMasalah', [el.dataset.id, el.dataset.status]).then(function () { toast('Status diperbarui.', 'ok'); reload(); })
+          .catch(function (e) { if (!e.handled) toast(e.message, 'err'); el.disabled = false; });
+        break;
+      case 'permintaan-status':
+        el.disabled = true;
+        api('apiUbahStatusPermintaan', [el.dataset.id, el.dataset.status, '']).then(function () { toast('Status diperbarui.', 'ok'); reload(); })
+          .catch(function (e) { if (!e.handled) toast(e.message, 'err'); el.disabled = false; });
+        break;
+      case 'pdf': {
+        var p = periode(); el.disabled = true; var old = el.innerHTML; el.textContent = 'Menyiapkan…';
+        api('apiExportPdf', [p.tahun, p.bulan]).then(function (r) {
+          unduhB64(r.nama, r.base64, 'application/pdf');
+          toast('PDF diunduh.', 'ok');
+        }).catch(function (e) { if (!e.handled) toast(e.message, 'err'); }).then(function () { el.disabled = false; el.innerHTML = old; });
+        break;
+      }
+      case 'logout': logout(); break;
+    }
+  }
+
+  document.addEventListener('click', function (ev) {
+    var t = ev.target;
+    if (t.id === 'modal-back') { closeModal(); return; }
+    if (t.id === 'scrim') { closeDrawer(); return; }
+    var nav = t.closest && t.closest('[data-nav]');
+    if (nav) {
+      ev.preventDefault();
+      var params = {};
+      try { params = JSON.parse(nav.getAttribute('data-params') || '{}'); } catch (e) { }
+      closeModal(true);
+      navigateTo(nav.getAttribute('data-nav'), params);
+      return;
+    }
+    var a = t.closest && t.closest('[data-act]');
+    if (a && !(a.tagName === 'A' && a.getAttribute('href') && a.getAttribute('href') !== 'javascript:void(0)')) {
+      // Kartu indikator: abaikan klik pada tombol di dalamnya (mereka punya aksi sendiri)
+      if (a.getAttribute('data-act') === 'detail' && t.closest('button,a')) return;
+      onAction(a, ev);
+    }
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape') { if ($('#modal-root').firstChild) closeModal(); else closeDrawer(); return; }
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('[data-act=detail]')) { ev.preventDefault(); onAction(ev.target, ev); }
+    if (ev.key === 'Enter' && ev.target.matches && ev.target.matches('.input-search.f-param')) { ev.preventDefault(); applyFilters(); }
+    if (ev.key === 'Tab' && $('#modal-root').firstChild) {   // jebakan fokus sederhana
+      var f = $$('#modal-root a[href],#modal-root button:not([disabled]),#modal-root input:not([type=hidden]),#modal-root select,#modal-root textarea');
+      if (!f.length) return;
+      var first = f[0], last = f[f.length - 1];
+      if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+      else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+    }
+  });
+  document.addEventListener('input', function (ev) {
+    var t = ev.target;
+    if (t.matches && t.matches('.tgt-in')) {
+      var f = t.form, n = $$('.tgt-in', f).filter(function (el) { return el.value.trim() !== el.getAttribute('data-orig'); }).length;
+      var info = $('#tgt-info'); if (info) info.textContent = n ? n + ' kotak diubah, belum disimpan' : '';
+      t.classList.toggle('dirty', t.value.trim() !== t.getAttribute('data-orig'));
+    }
+  });
+  document.addEventListener('change', function (ev) {
+    var t = ev.target;
+    if (t.form && t.form.getAttribute('id') === 'form-isian' && t.name === 'keterangan') { sinkIsian(t.form); return; }
+    if (t.form && t.form.id === 'form-user-modal' && (t.name === 'role' || t.name === 'modeSandi' || t.name === 'bidang')) { syncUserForm(t.form); return; }
+    if (t.form && t.form.getAttribute('id') === 'form-user-modal' && (t.name === 'ik' || t.name === 'program')) { syncIk(t.form); return; }
+    if (t.form && t.form.getAttribute('id') === 'form-ind-baru' && t.name === 'bidang') { syncIndBaru(t.form); return; }
+    if (t.form && t.form.getAttribute('id') === 'form-tarik') { syncTarik(t.form); return; }
+    if (t.id === 'logo-file' && t.files && t.files[0]) {
+      var info = $('#logo-info'), fcfg = $('#form-config');
+      if (info) info.textContent = 'Memproses gambar…';
+      perkecilLogo(t.files[0], function (url) {
+        fcfg.elements.logoData.value = url; fcfg.elements.logoUrl.value = ''; setLogoPreview(url);
+        if (info) info.textContent = 'Logo baru siap (' + Math.round(url.length / 1024) + ' KB). Tekan Simpan Konfigurasi untuk menerapkan.';
+      }, function (pesan) { if (info) info.textContent = pesan; });
+      return;
+    }
+    if (t.matches && t.matches('.f-param') && !t.matches('.input-search')) applyFilters();
+    else if (t.matches && t.matches('.input-search.f-param')) applyFilters();
+  });
+  function applyFilters() {
+    var p = {};
+    $$('#app-container .f-param').forEach(function (el) { if (el.value) p[el.getAttribute('data-param')] = el.value; });
+    ['view', 'periode'].forEach(function (k) { if (AppState.params && AppState.params[k]) p[k] = AppState.params[k]; });
+    navigateTo(AppState.page, p, { keep: true });
+  }
+
+  document.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var f = ev.target, fid = f.getAttribute('id');
+    if (fid === 'form-login') return doLoginSubmit(ev);
+    if (fid === 'form-isian') return submitIsian(f);
+    if (fid === 'form-remind') return submitRemind(f);
+    if (fid === 'form-user-modal') return submitUserForm(f);
+    if (fid === 'form-program-modal') return submitProgramForm(f);
+    if (fid === 'form-target') return submitTarget(f);
+    if (fid === 'form-bukti') return submitBukti(f);
+    if (fid === 'form-tarik') return;
+    if (f.getAttribute('data-api')) return submitGeneric(f);
+  });
+
+  /* ---------- inisialisasi ---------- */
+  function init() {
+    $('#btn-logout-side').addEventListener('click', logout);
+    var tl = $('#btn-theme-login');
+    if (tl) tl.addEventListener('click', function () { window.DkTheme.next(); toast(window.DkTheme.label()); });
+    $('#btn-back').addEventListener('click', goBack);
+    if (window.DkTheme) window.DkTheme.refresh();
+    applyBrand(document.documentElement.getAttribute('data-nama'), document.documentElement.getAttribute('data-sub'));
+    applyFavicon(document.documentElement.getAttribute('data-logo'));
+    applyLogo(document.documentElement.getAttribute('data-logo'));
+    $('#btn-menu').addEventListener('click', openDrawer);
+    $('#btn-notif').addEventListener('click', function () { navigateTo('monitoring', {}); });
+    $('#btn-user').addEventListener('click', function () {
+      var u = AppState.user; if (!u) return;
+      openModal('Akun Saya',
+        '<div class="pic-line" style="margin-bottom:16px"><div class="avatar">' + esc((u.nama || '?').charAt(0)) + '</div><div><b>' + esc(u.nama) + '</b><div class="muted sm">' + esc(ROLE_LABEL[u.role] || u.role) + (u.bidang ? ' · ' + esc(u.bidang) : '') + '</div></div></div>' +
+        '<div class="form-actions" style="margin-bottom:12px"><button class="btn btn-ghost theme-btn" type="button" data-act="theme"><span class="ic" aria-hidden="true">brightness_auto</span><span>Tema: <b class="theme-lbl"></b></span></button></div>' +
+        '<div class="form-actions"><button class="btn btn-primary" type="button" data-nav="pengaturan">Pengaturan Akun</button><button class="btn btn-ghost" type="button" data-act="logout">Keluar</button></div>');
+      if (window.DkTheme) window.DkTheme.refresh();
+    });
+    $('#sel-bulan').addEventListener('change', function () { navigateTo(AppState.page, AppState.params); refreshBadgeForPeriod(); });
+    $('#sel-tahun').addEventListener('change', function () { navigateTo(AppState.page, AppState.params); });
+    $('#skip-link').addEventListener('click', function (e) { e.preventDefault(); $('#main').focus(); });
+    showLogin('');
+  }
+  function refreshBadgeForPeriod() { /* lencana mengikuti bulan aktif konfigurasi; tidak berubah saat pratinjau periode */ }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+  window.AppState = AppState; window.navigateTo = navigateTo;
+})();
+</script>
