@@ -53,12 +53,34 @@
   <!-- ================= LOGIN ================= -->
   <main id="view-login" class="login-wrap" hidden>
   <button type="button" class="icon-btn theme-btn theme-fab" id="btn-theme-login"><span class="ic" aria-hidden="true">brightness_auto</span></button>
-    <section class="card login-card" aria-labelledby="login-title">
-      <div class="brand brand-lg">
-        <span class="emblem"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><circle cx="16" cy="16" r="13.2" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="1.4"/><path d="M13 7h6v6h6v6h-6v6h-6v-6H7v-6h6z" fill="#fff"/></svg></span>
-        <div><h1 id="login-title" class="brand-name" data-brand="full">DKPPKB Sulbar Intelligence</h1>
-        <p class="muted">Dasbor eksekutif indikator kesehatan, pengendalian penduduk &amp; KB Provinsi Sulawesi Barat</p></div>
+  <div class="land">
+    <header class="land-head">
+      <span class="emblem emblem-xl"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><circle cx="16" cy="16" r="13.2" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="1.4"/><path d="M13 7h6v6h6v6h-6v6h-6v-6H7v-6h6z" fill="#fff"/></svg></span>
+      <h1 id="login-title" class="land-title" data-brand="full">DKPPKB Sulbar Intelligence</h1>
+      <p class="land-sub">Dasbor eksekutif indikator kesehatan, pengendalian penduduk &amp; KB Provinsi Sulawesi Barat</p>
+    </header>
+
+    <div id="land-pilih" class="land-panel">
+      <div class="land-grid">
+        <button type="button" class="land-card" data-land="login">
+          <span class="land-ic"><span class="ic" aria-hidden="true">login</span></span>
+          <b>Login</b>
+          <span class="muted">Masuk untuk mengisi, memantau, dan menganalisis data kinerja.</span>
+          <span class="land-go">Masuk <span class="ic" aria-hidden="true">arrow_forward</span></span>
+        </button>
+        <button type="button" class="land-card land-card-alt" data-land="minta">
+          <span class="land-ic"><span class="ic" aria-hidden="true">upload_file</span></span>
+          <b>Minta Data</b>
+          <span class="muted">Ajukan permintaan data tanpa perlu akun. Admin akan menindaklanjuti.</span>
+          <span class="land-go">Ajukan <span class="ic" aria-hidden="true">arrow_forward</span></span>
+        </button>
       </div>
+      <p class="land-foot">Dinas Kesehatan, Pengendalian Penduduk dan Keluarga Berencana · Provinsi Sulawesi Barat</p>
+    </div>
+
+    <section id="land-login" class="card login-card land-panel" aria-labelledby="land-login-h" hidden>
+      <div class="land-back"><button type="button" class="btn btn-ghost btn-sm" data-land="pilih"><span class="ic" aria-hidden="true">arrow_back</span>Kembali</button></div>
+      <h2 id="land-login-h" class="h2 flat">Masuk</h2>
       <form id="form-login" novalidate>
         <div class="field"><label for="login-user">Nama pengguna</label>
           <input class="input" id="login-user" name="username" type="text" autocomplete="username" autocapitalize="none" required maxlength="40"></div>
@@ -69,6 +91,36 @@
       </form>
       <p class="muted sm center">Akses terbatas untuk pegawai berwenang. Hubungi admin bila lupa kata sandi.</p>
     </section>
+
+    <section id="land-minta" class="card login-card land-panel land-wide" aria-labelledby="land-minta-h" hidden>
+      <div class="land-back"><button type="button" class="btn btn-ghost btn-sm" data-land="pilih"><span class="ic" aria-hidden="true">arrow_back</span>Kembali</button></div>
+      <div id="minta-form-wrap">
+        <h2 id="land-minta-h" class="h2 flat">Minta Data</h2>
+        <p class="muted sm" style="margin:0 0 14px">Tidak perlu akun. Isi formulir, admin akan menghubungi Anda melalui kontak yang diberikan.</p>
+        <form id="form-minta" novalidate>
+          <div class="field-row">
+            <div class="field"><label for="mt-nama">Nama lengkap *</label><input class="input" id="mt-nama" name="nama" type="text" maxlength="80" autocomplete="name" required></div>
+            <div class="field"><label for="mt-inst">Instansi / asal *</label><input class="input" id="mt-inst" name="instansi" type="text" maxlength="100" autocomplete="organization" required></div>
+          </div>
+          <div class="field"><label for="mt-kontak">Email atau WhatsApp *</label><input class="input" id="mt-kontak" name="kontak" type="text" maxlength="80" autocomplete="off" required></div>
+          <div class="field"><label for="mt-keb">Data yang diminta *</label><textarea class="input input-area" id="mt-keb" name="kebutuhan" maxlength="1000" rows="4" placeholder="Contoh: capaian indikator SPM per kabupaten tahun 2026 untuk bahan musrenbang" required></textarea></div>
+          <div class="field-row">
+            <div class="field"><label for="mt-format">Format</label><select class="input" id="mt-format" name="format"><option>Excel</option><option>PDF</option><option>Dasbor</option><option>Lainnya</option></select></div>
+            <div class="field"><label for="mt-tenggat">Dibutuhkan paling lambat</label><input class="input" id="mt-tenggat" name="tenggat" type="date"></div>
+          </div>
+          <div class="hp" aria-hidden="true"><label>Situs<input type="text" name="situs" tabindex="-1" autocomplete="off"></label></div>
+          <p class="form-msg" id="minta-msg" role="alert"></p>
+          <button class="btn btn-primary btn-block" type="submit" id="minta-btn">Kirim Permintaan</button>
+        </form>
+      </div>
+      <div id="minta-ok" class="land-ok" hidden>
+        <span class="ic">check_circle</span>
+        <h2 class="h2 flat">Permintaan terkirim</h2>
+        <p class="muted">Nomor permintaan Anda: <b id="minta-id"></b>. Simpan nomor ini. Admin akan menghubungi Anda melalui kontak yang diberikan.</p>
+        <button type="button" class="btn btn-primary" data-land="pilih">Kembali ke halaman awal</button>
+      </div>
+    </section>
+  </div>
   </main>
 
   <!-- ================= APLIKASI ================= -->

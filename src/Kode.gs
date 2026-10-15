@@ -60,7 +60,7 @@ function doGet(e) {
 /* ---------------- API JSON (dipakai tampilan statis, mis. GitHub Pages) ----------------
  * Klien statis mengirim POST text/plain berisi {"fn":"nama","args":[...]} ke URL web app.
  * Hanya fungsi pada daftar putih di bawah yang boleh dipanggil; otorisasi tetap lewat token sesi. */
-const API_JSON_ = ['apiMerek', 'doLogin', 'doLogout', 'getPageContent', 'apiBootstrap', 'apiAmbilIsian', 'apiSimpanIsian', 'apiVerifikasi', 'apiKirimPengingat',
+const API_JSON_ = ['apiMerek', 'apiMulai', 'apiAjukanDataPublik', 'doLogin', 'doLogout', 'getPageContent', 'apiBootstrap', 'apiAmbilIsian', 'apiSimpanIsian', 'apiVerifikasi', 'apiKirimPengingat',
   'apiSimpanMasalah', 'apiUbahStatusMasalah', 'apiSimpanPermintaan', 'apiUbahStatusPermintaan', 'apiSimpanConfig', 'apiSimpanIndikator', 'apiSimpanProgram',
   'apiSimpanTarget', 'apiSimpanUser', 'apiResetPassword', 'apiUbahStatusUser', 'apiUbahPassword', 'apiExportPdf', 'apiDaftarBukti', 'apiUnggahBukti',
   'apiUnduhBukti', 'apiHapusBukti', 'apiTarikData', 'apiSimpanMonev', 'apiHapusMonev', 'apiUnggahBuktiMonev', 'apiUnduhBuktiMonev', 'apiHapusBuktiMonev'];
@@ -352,12 +352,50 @@ function doLogin(username, password) {
     cache.remove(kunci);
     const token = buatSesi_(u);
     catatLog_('login', u.Username, 'Berhasil masuk');
-    return { token: token };
+    let mulai = null;
+    try { const mu = apiMulai(token); if (mu.success) mulai = mu.data; } catch (e) { mulai = null; }
+    return { token: token, mulai: mulai };
   });
 }
 
 function doLogout(token) {
   return run_(() => { if (token) CacheService.getScriptCache().remove('s_' + token); return true; });
+}
+
+/** Satu panggilan untuk memulai aplikasi: data awal + halaman Beranda (menggantikan 2 panggilan terpisah). */
+function apiMulai(token) {
+  return run_(() => {
+    const boot = apiBootstrap(token);
+    if (!boot.success) throw new Error(boot.expired ? 'SESI_HABIS' : boot.message);
+    const page = getPageContent(token, 'beranda', { tahun: boot.data.cfg.tahun, bulan: boot.data.cfg.bulan });
+    return { boot: boot.data, page: page };
+  });
+}
+
+/** Permintaan data dari publik (tanpa akun) lewat halaman awal. Dibatasi agar tidak disalahgunakan. */
+function apiAjukanDataPublik(p) {
+  return run_(() => {
+    p = p || {};
+    if (String(p.situs || '').trim()) throw new Error('Permintaan tidak dapat diproses.');   // kolom jebakan bot
+    const nama = bersih_(p.nama, 80), instansi = bersih_(p.instansi, 100), kontak = bersih_(p.kontak, 80), keb = bersih_(p.kebutuhan, 1000);
+    if (nama.length < 3) throw new Error('Isi nama lengkap Anda.');
+    if (instansi.length < 2) throw new Error('Isi instansi atau asal Anda.');
+    if (kontak.length < 5) throw new Error('Isi email atau nomor WhatsApp yang bisa dihubungi.');
+    if (keb.length < 10) throw new Error('Uraikan data yang diminta (minimal 10 karakter).');
+    const cache = CacheService.getScriptCache(), jam = Utilities.formatDate(new Date(), TZ, 'yyMMddHH'), kunci = 'pub_' + jam;
+    const n = Number(cache.get(kunci) || 0);
+    if (n >= 20) throw new Error('Permintaan sedang banyak. Silakan coba lagi satu jam lagi atau hubungi admin.');
+    cache.put(kunci, String(n + 1), 3700);
+    const format = ['Excel', 'PDF', 'Dasbor', 'Lainnya'].indexOf(p.format) >= 0 ? p.format : 'Excel';
+    const tg = /^\d{4}-\d{2}-\d{2}$/.test(String(p.tenggat || '')) ? String(p.tenggat) : '';
+    const id = 'PD-' + Utilities.formatDate(new Date(), TZ, 'yyMMddHHmmss');
+    appendObj_(SHEET.PERMINTAAN, {
+      ID: id, Tanggal: nowStr_(), Pemohon: nama, Instansi: instansi, Kebutuhan: keb, Format: format, Tenggat: tg,
+      Status: 'Baru', Catatan: 'Kontak: ' + kontak + ' · via halaman awal'
+    });
+    catatLog_('permintaan', 'publik', 'Permintaan data publik ' + id + ' dari ' + nama);
+    return { id: id };
+  });
 }
 
 /** Data awal setelah login: pengguna, konfigurasi, menu, badge. */

@@ -71,7 +71,7 @@
     });
   }
   /** Panggil API ber-token. Mengembalikan data atau melempar Error; sesi habis -> kembali ke login. */
-  var PCACHE = {}, READ_API = { apiBootstrap: 1, apiAmbilIsian: 1, apiDaftarBukti: 1, apiUnduhBukti: 1, apiTarikData: 1, apiUnduhBuktiMonev: 1 };
+  var PCACHE = {}, READ_API = { apiBootstrap: 1, apiMulai: 1, apiAmbilIsian: 1, apiDaftarBukti: 1, apiUnduhBukti: 1, apiTarikData: 1, apiUnduhBuktiMonev: 1 };
   function api(fn, args) {
     if (!READ_API[fn]) pcReset();   // ada perubahan data: buang cache halaman
     args = [AppState.sessionToken].concat(args || []);
@@ -109,7 +109,7 @@
     if (!AppState.sessionToken || !page || (params && params.tambah)) return;
     var key = pkey(page, params);
     if (PSEEN[key] || PNSEEN > 80) return;
-    if (PCACHE[key] && Date.now() - PCACHE[key].t < PTTL) { PSEEN[key] = 1; discoverHtml(PCACHE[key].html); return; }
+    if (PCACHE[key] && Date.now() - PCACHE[key].t < PTTL) { PSEEN[key] = 1; return; }
     PSEEN[key] = 1; PNSEEN++;
     var job = { page: page, params: params || {} };
     if (urgent) PQ.unshift(job); else PQ.push(job);
@@ -117,12 +117,11 @@
   }
   function pump() {
     var tok = AppState.sessionToken;
-    while (PRUN < 3 && PQ.length && tok) {
+    while (PRUN < 2 && PQ.length && tok) {
       var job = PQ.shift(); PRUN++;
       (function (j, gen) {
         prefetchPage(j.page, j.params).then(function (e) {
           PRUN--;
-          if (e && gen === PGEN) discoverHtml(e.html);
           setTimeout(pump, 60);
         });
       })(job, PGEN);
@@ -150,7 +149,7 @@
   function scheduleCrawl() {
     clearTimeout(crawlTimer);
     if (!AppState.sessionToken) return;
-    crawlTimer = setTimeout(function () { if (AppState.sessionToken) { prefetchTabs(); prefetchMenu(); } }, 3000);
+    crawlTimer = setTimeout(function () { if (AppState.sessionToken) { prefetchTabs(); prefetchMenu(); } }, 5000);
   }
   /** Ping ringan agar server Apps Script tetap hangat selama aplikasi dipakai. */
   function startKeepAlive() {
@@ -193,11 +192,30 @@
   }
 
   /* ---------- login / sesi ---------- */
+  function landShow(w) {
+    ['pilih', 'login', 'minta'].forEach(function (k) { show($('#land-' + k), k === w); });
+    if (w === 'login') setTimeout(function () { $('#login-user').focus(); }, 50);
+    if (w === 'minta') { show($('#minta-form-wrap'), true); show($('#minta-ok'), false); $('#minta-msg').textContent = ''; }
+    window.scrollTo(0, 0);
+  }
   function showLogin(msg) {
     show($('#view-app'), false); show($('#view-login'), true);
     $('#login-msg').textContent = msg || '';
     $('#login-pass').value = '';
-    setTimeout(function () { $('#login-user').focus(); }, 50);
+    landShow(msg ? 'login' : 'pilih');
+  }
+  function submitMinta(e) {
+    var f = $('#form-minta'), btn = $('#minta-btn'), msg = $('#minta-msg'), d = {};
+    msg.textContent = '';
+    ['nama', 'instansi', 'kontak', 'kebutuhan', 'format', 'tenggat', 'situs'].forEach(function (k) { d[k] = (f.elements[k] && f.elements[k].value) || ''; });
+    btn.disabled = true; btn.textContent = 'Mengirim…';
+    call('apiAjukanDataPublik', [d]).then(function (r) {
+      if (!r || !r.success) throw new Error((r && r.message) || 'Gagal mengirim permintaan.');
+      $('#minta-id').textContent = r.data.id; f.reset();
+      show($('#minta-form-wrap'), false); show($('#minta-ok'), true);
+    }).catch(function (err) { msg.textContent = err.message; })
+      .then(function () { btn.disabled = false; btn.textContent = 'Kirim Permintaan'; });
+    return false;
   }
   function forceLogout(msg) {
     pcReset(); simpanSesi(null); AppState.sessionToken = null; AppState.user = null; AppState.hist = []; AppState.rendered = false; updBack();
@@ -213,19 +231,27 @@
     call('doLogin', [u, p]).then(function (r) {
       if (!r || !r.success) throw new Error((r && r.message) || 'Gagal masuk.');
       AppState.sessionToken = r.data.token; simpanSesi(r.data.token);
-      return startApp();
+      return startApp(r.data.mulai);
     }).catch(function (err) {
       msg.textContent = err.message;
     }).then(function () { btn.disabled = false; btn.textContent = 'Masuk'; });
     return false;
   }
-  function startApp() {
+  /** Mulai aplikasi. `pre` = {boot, page} dari doLogin/apiMulai: satu panggilan server untuk data awal + Beranda. */
+  function startApp(pre) {
     pcReset();
-    return api('apiBootstrap').then(function (d) {
+    var ambil = pre && pre.boot ? Promise.resolve(pre) : api('apiMulai').catch(function (e) {
+      if (e && e.handled) throw e;   // server lama belum punya apiMulai: pakai cara lama
+      return api('apiBootstrap').then(function (b) { return { boot: b, page: null }; });
+    });
+    return ambil.then(function (mu) {
+      var d = mu.boot;
       AppState.user = d.user; AppState.cfg = d.cfg; AppState.tahunList = d.tahunList;
       buildChrome(d);
       show($('#view-login'), false); show($('#view-app'), true);
-      return navigateTo('beranda', {}).then(function () { prefetchMenu(); startKeepAlive(); });
+      var pg = mu.page, segar = false;
+      if (pg && pg.success && !pg.redirect && pg.html) { PCACHE[pkey('beranda', {})] = { html: pg.html, title: pg.title, t: Date.now() }; segar = true; }
+      return navigateTo('beranda', {}, segar ? { fresh: true } : undefined).then(function () { prefetchMenu(); startKeepAlive(); });
     });
   }
   /* Logo resmi (opsional, dari Config LogoUrl). Tanpa URL, dipakai emblem hijau bawaan. */
@@ -310,7 +336,7 @@
     if (!AppState.sessionToken) return Promise.resolve();
     params = params || {};
     var my = ++AppState.req;
-    if (!(opts && (opts.keep || opts.back || opts.redirect)) && AppState.rendered && page !== AppState.page) {
+    if (!(opts && (opts.keep || opts.back || opts.redirect)) && AppState.rendered && (page !== AppState.page || JSON.stringify(params) !== JSON.stringify(AppState.params))) {
       AppState.hist.push({ page: AppState.page, params: AppState.params });
       if (AppState.hist.length > 30) AppState.hist.shift();
     }
@@ -320,8 +346,10 @@
     var c = $('#app-container');
     var p = Object.assign({}, params, periode());
     var ckey = page + '|' + JSON.stringify(p), hit = !(opts && (opts.keep || opts.redirect)) && PCACHE[ckey] && (Date.now() - PCACHE[ckey].t < PTTL) ? PCACHE[ckey] : null;
-    if (hit) injectPage(page, hit.html, hit.title, opts);   // tampil seketika, lalu disegarkan di latar
-    else if (!(opts && opts.keep)) c.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
+    if (hit) {
+      injectPage(page, hit.html, hit.title, opts);   // tampil seketika, lalu disegarkan di latar
+      if (opts && opts.fresh) { busy(false); return Promise.resolve(); }   // baru diambil dari server: tidak perlu diambil lagi
+    } else if (!(opts && opts.keep)) c.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
     return call('getPageContent', [AppState.sessionToken, page, p]).then(function (r) {
       if (my !== AppState.req) return;
       busy(false);
@@ -1101,6 +1129,7 @@
     ev.preventDefault();
     var f = ev.target, fid = f.getAttribute('id');
     if (fid === 'form-login') return doLoginSubmit(ev);
+    if (fid === 'form-minta') return submitMinta(ev);
     if (fid === 'form-isian') return submitIsian(f);
     if (fid === 'form-remind') return submitRemind(f);
     if (fid === 'form-user-modal') return submitUserForm(f);
@@ -1119,6 +1148,7 @@
     var tl = $('#btn-theme-login');
     if (tl) tl.addEventListener('click', function () { window.DkTheme.next(); toast(window.DkTheme.label()); });
     $('#btn-back').addEventListener('click', goBack);
+    document.addEventListener('click', function (ev) { var l = ev.target.closest && ev.target.closest('[data-land]'); if (l) landShow(l.getAttribute('data-land')); });
     if (window.DkTheme) window.DkTheme.refresh();
     applyBrand(document.documentElement.getAttribute('data-nama'), document.documentElement.getAttribute('data-sub'));
     applyFavicon(document.documentElement.getAttribute('data-logo'));
