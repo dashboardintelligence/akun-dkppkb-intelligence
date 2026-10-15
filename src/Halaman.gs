@@ -781,6 +781,24 @@ function pagePengaturan_(m, user, params, ctx) {
     field_('Atau URL logo (opsional, https://…, tautan langsung ke gambar)', 'logoUrl', 'url', /^https:/.test(c.LogoUrl || '') ? c.LogoUrl : '', 'maxlength="600" placeholder="https://…/logo.png"') +
     '<div class="form-actions"><button class="btn btn-primary" type="submit">Simpan Konfigurasi</button></div><p class="form-msg" role="alert"></p></form></section>';
 
+
+  // Kalender kegiatan (admin): tambah, ubah, hapus. Yang bertanda publik tampil di halaman depan.
+  const keg = daftarKegiatan_();
+  const tglTeks = x => { const t = String(x).split('-'); return t.length === 3 ? Number(t[2]) + ' ' + BULAN_S[Number(t[1]) - 1] + ' ' + t[0] : x; };
+  h += '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Kalender Kegiatan</h2><p class="muted sm">Kegiatan yang bertanda &ldquo;publik&rdquo; tampil di halaman depan tanpa login.</p></div>' +
+    '<button type="button" class="btn btn-ghost btn-sm" data-act="edit-keg" data-json="{}">' + ic_('add') + 'Tambah kegiatan</button></div>' +
+    (keg.length ? '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Tanggal</th><th>Kegiatan</th><th>Jenis</th><th>Tampil</th><th></th></tr></thead><tbody>' +
+      keg.map(x => '<tr><td>' + esc_(tglTeks(x.mulai)) + (x.selesai ? ' &ndash; ' + esc_(tglTeks(x.selesai)) : '') + (x.jam ? '<br><span class="muted sm">' + esc_(x.jam) + '</span>' : '') + '</td><td>' + esc_(x.judul) + (x.tempat ? '<br><span class="muted sm">' + esc_(x.tempat) + '</span>' : '') + '</td><td>' + esc_(x.jenis) + '</td><td>' + (x.publik ? chip_('ok', 'Publik') : chip_('mute', 'Internal')) + '</td>' +
+        '<td class="r"><button type="button" class="btn btn-ghost btn-sm" data-act="edit-keg" data-json="' + esc_(JSON.stringify(x)) + '">Ubah</button> <button type="button" class="btn btn-ghost btn-sm" data-act="hapus-keg" data-id="' + esc_(x.id) + '" data-judul="' + esc_(x.judul) + '">Hapus</button></td></tr>').join('') + '</tbody></table></div>'
+      : '<p class="muted">Belum ada kegiatan. Klik &ldquo;Tambah kegiatan&rdquo; untuk mulai.</p>') +
+    '<form id="form-kegiatan" class="form-card sub-form" data-api="apiSimpanKegiatan" hidden novalidate><h3 class="h3">Form Kegiatan</h3><input type="hidden" name="id" value=""><div class="form-grid">' +
+    field_('Tanggal mulai', 'mulai', 'date', '', 'required') + field_('Tanggal selesai (opsional)', 'selesai', 'date', '') +
+    field_('Jam (opsional, mis. 09.00 – 12.00)', 'jam', 'text', '', 'maxlength="30"') + field_('Tempat (opsional)', 'tempat', 'text', '', 'maxlength="120"') +
+    select_('Jenis', 'jenis', KEG_JENIS, 'Rapat') + field_('Bidang terkait (opsional)', 'bidang', 'text', '', 'maxlength="100"') +
+    select_('Tampilkan di halaman depan (publik)', 'publik', [{ v: 'Tidak', t: 'Tidak, hanya internal' }, { v: 'Ya', t: 'Ya, tampil untuk umum' }], 'Tidak') + '</div>' +
+    field_('Judul kegiatan', 'judul', 'text', '', 'required maxlength="150"') +
+    '<div class="form-actions"><button class="btn btn-primary" type="submit">Simpan Kegiatan</button><button type="button" class="btn btn-ghost" data-act="toggle-form" data-target="form-kegiatan">Tutup</button></div><p class="form-msg" role="alert"></p></form></section>';
+
   const users = readTable_(SHEET.USERS);
   const allInd = readTable_(SHEET.INDIKATOR);
   h += '<section class="card card-pad"><div class="sec-top"><h2 class="h2 flat">Indikator</h2><button type="button" class="btn btn-ghost btn-sm" data-act="edit-ind" data-json="{}">' + ic_('add') + 'Tambah</button></div>' +

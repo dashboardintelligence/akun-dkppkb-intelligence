@@ -15,7 +15,7 @@ const SESI_DETIK = 21600; // 6 jam (batas maksimum CacheService)
 
 const SHEET = {
   CONFIG: 'Config', BIDANG: 'Bidang', INDIKATOR: 'Indikator', ISIAN: 'Isian',
-  USERS: 'Users', MASALAH: 'Masalah', PERMINTAAN: 'PermintaanData', LOG: 'Log', PROGRAM: 'Program', TARGET: 'Target', BUKTI: 'Bukti', MONEV: 'Monev'
+  USERS: 'Users', MASALAH: 'Masalah', PERMINTAAN: 'PermintaanData', LOG: 'Log', PROGRAM: 'Program', TARGET: 'Target', BUKTI: 'Bukti', MONEV: 'Monev', KALENDER: 'Kalender'
 };
 
 const HEADERS = {
@@ -27,6 +27,7 @@ const HEADERS = {
   Masalah: ['ID', 'Tanggal', 'IndikatorID', 'Bidang', 'Permasalahan', 'Rekomendasi', 'Prioritas', 'Status', 'Penanggung', 'Tenggat', 'DibuatOleh'],
   PermintaanData: ['ID', 'Tanggal', 'Pemohon', 'Instansi', 'Kebutuhan', 'Format', 'Tenggat', 'Status', 'Catatan', 'Lampiran', 'Kontak', 'Sumber', 'DitinjauOleh', 'DitinjauPada'],
   Log: ['Waktu', 'Jenis', 'Aktor', 'Deskripsi'],
+  Kalender: ['ID', 'Judul', 'Mulai', 'Selesai', 'Jam', 'Tempat', 'Jenis', 'Bidang', 'Publik', 'DibuatOleh', 'DibuatPada'],
   Program: ['ID', 'Nama', 'Bidang', 'Sub', 'Aktif'],
   Target: ['IndikatorID', 'Tahun', 'Periode', 'Target', 'DiubahOleh', 'DiubahPada'],
   Bukti: ['ID', 'IndikatorID', 'Tahun', 'Bulan', 'NamaFile', 'Tipe', 'Ukuran', 'FileId', 'Catatan', 'DiunggahOleh', 'DiunggahPada'],
@@ -60,7 +61,7 @@ function doGet(e) {
 /* ---------------- API JSON (dipakai tampilan statis, mis. GitHub Pages) ----------------
  * Klien statis mengirim POST text/plain berisi {"fn":"nama","args":[...]} ke URL web app.
  * Hanya fungsi pada daftar putih di bawah yang boleh dipanggil; otorisasi tetap lewat token sesi. */
-const API_JSON_ = ['apiMerek', 'apiMulai', 'apiAjukanDataPublik', 'apiUnduhLampiranPermintaan', 'doLogin', 'doLogout', 'getPageContent', 'apiBootstrap', 'apiAmbilIsian', 'apiSimpanIsian', 'apiVerifikasi', 'apiKirimPengingat',
+const API_JSON_ = ['apiMerek', 'apiKalenderPublik', 'apiSimpanKegiatan', 'apiHapusKegiatan', 'apiMulai', 'apiAjukanDataPublik', 'apiUnduhLampiranPermintaan', 'doLogin', 'doLogout', 'getPageContent', 'apiBootstrap', 'apiAmbilIsian', 'apiSimpanIsian', 'apiVerifikasi', 'apiKirimPengingat',
   'apiSimpanMasalah', 'apiUbahStatusMasalah', 'apiSimpanPermintaan', 'apiUbahStatusPermintaan', 'apiSimpanConfig', 'apiSimpanIndikator', 'apiSimpanProgram',
   'apiSimpanTarget', 'apiSimpanUser', 'apiResetPassword', 'apiUbahStatusUser', 'apiUbahPassword', 'apiExportPdf', 'apiDaftarBukti', 'apiUnggahBukti',
   'apiUnduhBukti', 'apiHapusBukti', 'apiTarikData', 'apiSimpanMonev', 'apiHapusMonev', 'apiUnggahBuktiMonev', 'apiUnduhBuktiMonev', 'apiHapusBuktiMonev'];
@@ -885,6 +886,85 @@ function apiUbahStatusPermintaan(token, id, status, catatan) {
     const hasil = upsertRow_(SHEET.PERMINTAAN, o => o.ID === id, { Status: status, Catatan: bersih_(catatan, 300), DitinjauOleh: user.nama, DitinjauPada: nowStr_() });
     if (hasil === 'insert') throw new Error('Permintaan tidak ditemukan.');
     catatLog_('permintaan', user.username, id + ' → ' + status);
+    return true;
+  });
+}
+
+
+/* ---------------- Kalender kegiatan ---------------- */
+
+const KEG_JENIS = ['Rapat', 'Lapangan', 'Tenggat', 'Lainnya'];
+
+/** Tanggal yyyy-MM-dd dari sel sheet (teks atau Date yang sudah diubah readTable_). Tidak sah = ''. */
+function tglKeg_(v) {
+  const s = String(v === undefined || v === null ? '' : v).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+}
+function kegObj_(r) {
+  const mulai = tglKeg_(r.Mulai);
+  const selesai = tglKeg_(r.Selesai);
+  return {
+    id: String(r.ID), judul: String(r.Judul || ''), mulai: mulai, selesai: selesai && selesai >= mulai ? selesai : '',
+    jam: String(r.Jam || ''), tempat: String(r.Tempat || ''), jenis: KEG_JENIS.indexOf(String(r.Jenis)) >= 0 ? String(r.Jenis) : 'Lainnya',
+    bidang: String(r.Bidang || ''), publik: String(r.Publik).toLowerCase() === 'ya'
+  };
+}
+/** Semua kegiatan (urut tanggal), untuk halaman Pengaturan admin. */
+function daftarKegiatan_() {
+  return readTable_(SHEET.KALENDER).map(kegObj_).filter(x => x.mulai && x.judul).sort((a, b) => a.mulai < b.mulai ? -1 : a.mulai > b.mulai ? 1 : 0);
+}
+/** Kegiatan berlabel publik untuk halaman depan (tanpa sesi). Hanya bidang yang aman ditampilkan. */
+function apiKalenderPublik() {
+  return run_(() => {
+    const n = new Date();
+    const awal = Utilities.formatDate(new Date(n.getTime() - 40 * 86400000), TZ, 'yyyy-MM-dd');
+    const akhir = Utilities.formatDate(new Date(n.getTime() + 190 * 86400000), TZ, 'yyyy-MM-dd');
+    return daftarKegiatan_().filter(x => x.publik && (x.selesai || x.mulai) >= awal && x.mulai <= akhir).slice(0, 150)
+      .map(x => ({ id: x.id, judul: x.judul, mulai: x.mulai, selesai: x.selesai, jam: x.jam, tempat: x.tempat, jenis: x.jenis }));
+  });
+}
+function apiSimpanKegiatan(token, p) {
+  return run_(() => {
+    const user = auth_(token, ['admin']);
+    p = p || {};
+    const judul = bersih_(p.judul, 150);
+    if (judul.length < 3) throw new Error('Judul kegiatan minimal 3 huruf.');
+    const mulai = tglKeg_(p.mulai);
+    if (!mulai) throw new Error('Tanggal mulai wajib diisi.');
+    let selesai = String(p.selesai || '').trim() ? tglKeg_(p.selesai) : '';
+    if (String(p.selesai || '').trim() && !selesai) throw new Error('Format tanggal selesai tidak valid.');
+    if (selesai && selesai < mulai) throw new Error('Tanggal selesai tidak boleh sebelum tanggal mulai.');
+    if (selesai === mulai) selesai = '';
+    const jenis = KEG_JENIS.indexOf(p.jenis) >= 0 ? p.jenis : 'Lainnya';
+    const data = {
+      Judul: judul, Mulai: mulai, Selesai: selesai, Jam: bersih_(p.jam, 30), Tempat: bersih_(p.tempat, 120), Jenis: jenis,
+      Bidang: bersih_(p.bidang, 100), Publik: p.publik === 'Ya' || p.publik === true ? 'Ya' : 'Tidak'
+    };
+    const id = bersih_(p.id, 40);
+    if (id) {
+      const hasil = upsertRow_(SHEET.KALENDER, o => String(o.ID) === id, data);
+      if (hasil === 'insert') throw new Error('Kegiatan tidak ditemukan.');
+      catatLog_('kalender', user.username, 'Ubah kegiatan ' + id);
+      return { id: id };
+    }
+    const baru = 'KG-' + Utilities.formatDate(new Date(), TZ, 'yyMMddHHmmss') + '-' + Utilities.getUuid().slice(0, 4);
+    data.ID = baru; data.DibuatOleh = user.nama; data.DibuatPada = nowStr_();
+    appendObj_(SHEET.KALENDER, data);
+    catatLog_('kalender', user.username, 'Tambah kegiatan ' + baru);
+    return { id: baru, baru: true };
+  });
+}
+function apiHapusKegiatan(token, id) {
+  return run_(() => {
+    const user = auth_(token, ['admin']);
+    const lock = LockService.getScriptLock();
+    lock.waitLock(10000);
+    try {
+      const r = readTable_(SHEET.KALENDER).find(x => String(x.ID) === String(id));
+      if (!r) throw new Error('Kegiatan tidak ditemukan.');
+      sheetTulis_(SHEET.KALENDER).deleteRow(r._row);
+    } finally { bust_(SHEET.KALENDER); lock.releaseLock(); }
+    catatLog_('kalender', user.username, 'Hapus kegiatan ' + id);
     return true;
   });
 }

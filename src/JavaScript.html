@@ -191,6 +191,49 @@
     if (!silent && lastFocus && lastFocus.focus) { try { lastFocus.focus(); } catch (e) { } }
   }
 
+
+  /* ---------- kalender kegiatan (halaman depan) ---------- */
+  var KAL = { data: [], y: 0, m: 0 };
+  var KAL_BLN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  var KAL_BLN_S = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
+  function kalPad(n) { return (n < 10 ? '0' : '') + n; }
+  function kalIso(y, m, d) { return y + '-' + kalPad(m + 1) + '-' + kalPad(d); }
+  function kalRender() {
+    var card = $('#kal-card'); if (!card) return;
+    var now = new Date(), hari = kalIso(now.getFullYear(), now.getMonth(), now.getDate());
+    var y = KAL.y, m = KAL.m, awal = kalIso(y, m, 1), nHari = new Date(y, m + 1, 0).getDate(), akhir = kalIso(y, m, nHari);
+    var off = (new Date(y, m, 1).getDay() + 6) % 7;
+    $('#kal-bln').textContent = KAL_BLN[m] + ' ' + y;
+    var items = KAL.data.filter(function (e) { return e.mulai <= akhir && (e.selesai || e.mulai) >= awal; });
+    var h = ['S', 'S', 'R', 'K', 'J', 'S', 'M'].map(function (d) { return '<b aria-hidden="true">' + d + '</b>'; }).join('');
+    for (var i = 0; i < off; i++) h += '<i></i>';
+    for (var d = 1; d <= nHari; d++) {
+      var iso = kalIso(y, m, d);
+      var ev = items.filter(function (e) { return e.mulai <= iso && (e.selesai || e.mulai) >= iso; })[0];
+      h += '<span class="' + (iso === hari ? 'kal-ini ' : '') + (ev ? 'kal-ada kal-' + esc(ev.jenis) : '') + '">' + d + '</span>';
+    }
+    $('#kal-grid').innerHTML = h;
+    var daftar = items.slice().sort(function (a, b) { return a.mulai < b.mulai ? -1 : 1; });
+    var depan = daftar.filter(function (e) { return (e.selesai || e.mulai) >= hari; });
+    var tampil = (depan.length ? depan : daftar).slice(0, 4);
+    $('#kal-list').innerHTML = tampil.length ? tampil.map(function (e) {
+      var p = e.mulai.split('-'), sub = [e.jam, e.tempat].filter(Boolean).join(' · ') || e.jenis;
+      var rentang = e.selesai ? ' – ' + Number(e.selesai.split('-')[2]) + ' ' + KAL_BLN_S[Number(e.selesai.split('-')[1]) - 1] : '';
+      return '<div class="kal-it kal-' + esc(e.jenis) + '"><div class="kal-tg"><b>' + Number(p[2]) + '</b>' + KAL_BLN_S[Number(p[1]) - 1] + '</div><div><b>' + esc(e.judul) + '</b><small>' + esc(sub + rentang) + '</small></div></div>';
+    }).join('') : '<p class="kal-kosong">Belum ada kegiatan terjadwal di bulan ini.</p>';
+  }
+  function kalGeser(n) {
+    var d = new Date(KAL.y, KAL.m + n, 1); KAL.y = d.getFullYear(); KAL.m = d.getMonth(); kalRender();
+  }
+  function kalMuat() {
+    var card = $('#kal-card'); if (!card || !API_URL) return;
+    var now = new Date(); KAL.y = now.getFullYear(); KAL.m = now.getMonth();
+    call('apiKalenderPublik', []).then(function (r) {
+      if (!r || !r.success || !Array.isArray(r.data)) return;
+      KAL.data = r.data; card.hidden = false; kalRender();
+    }).catch(function () { });
+  }
+
   /* ---------- login / sesi ---------- */
   function landShow(w) {
     ['pilih', 'login', 'minta'].forEach(function (k) { show($('#land-' + k), k === w); });
@@ -1077,6 +1120,16 @@
         if (AppState.page === 'rekomendasi') apply(); else { AppState.pending = apply; navigateTo('rekomendasi', {}); }
         break;
       }
+      case 'edit-keg': { var dk = {}; try { dk = JSON.parse(el.getAttribute('data-json') || '{}'); } catch (e) { } dk.publik = dk.publik ? 'Ya' : 'Tidak'; fillForm('form-kegiatan', dk); break; }
+      case 'hapus-keg': {
+        var kid = el.getAttribute('data-id');
+        openModal('Hapus kegiatan?', '<p>Kegiatan <b>' + esc(el.getAttribute('data-judul') || '') + '</b> akan dihapus dari kalender.</p><div class="form-actions"><button type="button" class="btn btn-primary" id="keg-ya">Ya, hapus</button><button type="button" class="btn btn-ghost" data-act="close-modal">Batal</button></div>');
+        var ya = $('#keg-ya'); if (ya) ya.addEventListener('click', function () {
+          ya.disabled = true; ya.textContent = 'Menghapus…';
+          api('apiHapusKegiatan', [kid]).then(function () { closeModal(); toast('Kegiatan dihapus.', 'ok'); return reload(); }).catch(function (e) { ya.disabled = false; ya.textContent = 'Ya, hapus'; if (!e.handled) toast(e.message, 'err'); });
+        });
+        break;
+      }
       case 'edit-ind': { var di = JSON.parse(el.getAttribute('data-json') || '{}'); fillForm('form-indikator', di); var fi = $('#form-indikator'); if (fi && fi.id) fi.elements.id.readOnly = !!di.id; if (fi && !di.id) { fi.elements.satuan.value = '%'; fi.elements.id.readOnly = false; } break; }
       case 'verif':
         el.disabled = true;
@@ -1222,7 +1275,9 @@
     $('#sel-tahun').addEventListener('change', function () { navigateTo(AppState.page, AppState.params).then(function () { prefetchTabs(); prefetchMenu(); }); });
     $('#skip-link').addEventListener('click', function (e) { e.preventDefault(); $('#main').focus(); });
     showLogin('');
+    $('#kal-prev').addEventListener('click', function () { kalGeser(-1); }); $('#kal-next').addEventListener('click', function () { kalGeser(1); });
     if (API_URL) {
+      kalMuat();
       try { var cm = JSON.parse(localStorage.getItem('dkppkb_merek') || 'null'); if (cm) { applyBrand(cm.nama, cm.sub); applyLogo(cm.logo); applyFavicon(cm.logo); } } catch (e) { }
       call('apiMerek', []).then(function (r) {
         if (!r || !r.success) return;
