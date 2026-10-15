@@ -84,7 +84,7 @@ function doPost(e) {
 
 /** Nama, subjudul, dan logo aplikasi untuk halaman login (tanpa sesi). */
 function apiMerek() {
-  return run_(() => { const m = merekAman_(); return { nama: m.nama, sub: m.sub, logo: logoAman_() }; });
+  return run_(() => { const m = merekAman_(); return { nama: m.nama, sub: m.sub, logo: logoAman_(), versi: 'monev-1', monev: !!PAGES_.monev }; });
 }
 
 /** URL logo resmi (opsional) dari Config. Hanya https. Gagal membaca = pakai logo bawaan. */
