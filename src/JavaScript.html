@@ -635,7 +635,7 @@
 
 
   /* ---------- Monev Kinerja ---------- */
-  var MV_JUDUL = { sasaran: 'Tujuan / Sasaran Program', ik: 'Indikator Kinerja (IK)', target: 'Target', realisasi: 'Realisasi', unit: 'Unit PIC', catatan: 'Catatan', keterangan: 'Keterangan' };
+  var MV_JUDUL = { sasaran: 'Tujuan / Sasaran Program', program: 'Program', ik: 'Indikator Kinerja (IK)', target: 'Target', realisasi: 'Realisasi', unit: 'Unit PIC', catatan: 'Catatan', keterangan: 'Keterangan' };
   var MV_TW = [{ v: 'TW1', t: 'TW 1 (Jan–Mar)' }, { v: 'TW2', t: 'TW 2 (Apr–Jun)' }, { v: 'TW3', t: 'TW 3 (Jul–Sep)' }, { v: 'TW4', t: 'TW 4 (Okt–Des)' }];
   function mvMeta() { var el = $('#monev-meta'); if (!el) return {}; try { return JSON.parse(el.getAttribute('data-json') || '{}'); } catch (e) { return {}; } }
   function mvSel(label, name, opts, val) {
@@ -651,6 +651,7 @@
   function openMonevForm(d) {
     var meta = mvMeta(), j = d.jenis, edit = !!d.id, h = '';
     if (j === 'sasaran') h = mvArea('Tujuan / sasaran program', 'teks', d.teks, 'required maxlength="300" rows="3" placeholder="Contoh: Meningkatnya derajat kesehatan ibu dan anak"');
+    else if (j === 'program') h = '<input type="hidden" name="induk" value="' + esc(d.induk || '') + '">' + mvArea('Program', 'teks', d.teks, 'required maxlength="300" rows="3" placeholder="Contoh: Program Pemenuhan Upaya Kesehatan Perorangan"');
     else if (j === 'ik') h = mvSel('Tujuan / sasaran program', 'induk', [{ v: '', t: '— Pilih sasaran —' }].concat(meta.sasaran || []), d.induk) +
       mvArea('Indikator kinerja (IK) tujuan program', 'teks', d.teks, 'required maxlength="300" rows="3" placeholder="Contoh: Persentase ibu hamil yang mendapat pelayanan K4"') +
       mvSel('Satuan', 'satuan', [{ v: '%', t: 'Persen (%)' }, { v: 'Angka', t: 'Angka' }, { v: 'Jumlah', t: 'Jumlah' }], d.satuan || '%');
@@ -671,7 +672,7 @@
     ['induk', 'teks', 'satuan', 'tw', 'angka', 'bidang', 'pic'].forEach(function (k) { if (f.elements[k]) o[k] = f.elements[k].value.trim(); });
     msg.className = 'form-msg'; msg.textContent = '';
     if (j !== 'sasaran' && !o.induk) { msg.textContent = j === 'ik' ? 'Pilih tujuan / sasaran program.' : 'Pilih indikator kinerja (IK).'; return; }
-    if ((j === 'sasaran' || j === 'ik') && o.teks.length < 5) { msg.textContent = 'Isi minimal 5 huruf.'; return; }
+    if ((j === 'sasaran' || j === 'ik' || j === 'program') && o.teks.length < 5) { msg.textContent = 'Isi minimal 5 huruf.'; return; }
     if ((j === 'catatan' || j === 'keterangan') && o.teks.length < 3) { msg.textContent = 'Isi minimal 3 huruf.'; return; }
     if ((j === 'target' || j === 'realisasi') && (o.angka === '' || isNaN(Number(angkaId(o.angka))))) { msg.textContent = 'Isi angka yang valid.'; return; }
     if (j === 'unit' && !o.bidang) { msg.textContent = 'Pilih unit / bidang.'; return; }

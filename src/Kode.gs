@@ -1246,6 +1246,7 @@ function apiHapusBukti(token, id) {
 /* ---------------- Monev Kinerja ----------------
  * Satu lembar "Monev" menampung semua sub-menu lewat kolom Jenis:
  *  sasaran    : Teks = Tujuan / Sasaran Program
+ *  program    : Induk = ID sasaran, Teks = Program yang mendukung sasaran
  *  ik         : Induk = ID sasaran, Teks = Indikator Kinerja (IK) Tujuan Program, Satuan
  *  target     : Induk = ID IK, TW, Angka          (satu nilai per IK + tahun + TW)
  *  realisasi  : Induk = ID IK, TW, Angka          (satu nilai per IK + tahun + TW)
@@ -1253,10 +1254,10 @@ function apiHapusBukti(token, id) {
  *  catatan    : Induk = ID IK, TW (opsional), Teks
  *  keterangan : Induk = ID IK, TW (opsional), Teks
  * Bukti dukung disimpan di lembar Bukti dengan IndikatorID "MV:<ID IK>" dan kolom Bulan berisi nomor TW (0 = umum). */
-const MONEV_JENIS = ['sasaran', 'ik', 'target', 'realisasi', 'unit', 'catatan', 'keterangan'];
+const MONEV_JENIS = ['sasaran', 'program', 'ik', 'target', 'realisasi', 'unit', 'catatan', 'keterangan'];
 const MONEV_TW = ['TW1', 'TW2', 'TW3', 'TW4'];
 const MONEV_SATUAN = ['%', 'Angka', 'Jumlah'];
-const MONEV_AWAL = { sasaran: 'SP', ik: 'IKM' };
+const MONEV_AWAL = { sasaran: 'SP', program: 'PRG', ik: 'IKM' };
 
 function monevIdBaru_(jenis) {
   const pre = MONEV_AWAL[jenis];
@@ -1307,13 +1308,13 @@ function apiSimpanMonev(token, p) {
       if (baris.Teks.length < 5) throw new Error('Tujuan / sasaran program terlalu pendek (minimal 5 huruf).');
     } else {
       ikId = bersih_(p.induk, 40);
-      if (jenis === 'ik') {
-        if (user.role !== 'admin') throw new Error('Hanya admin yang dapat mengelola indikator kinerja.');
-        if (!semua.some(r => r.Jenis === 'sasaran' && String(r.ID) === ikId)) throw new Error('Pilih tujuan / sasaran program untuk IK ini.');
+      if (jenis === 'ik' || jenis === 'program') {
+        if (user.role !== 'admin') throw new Error('Hanya admin yang dapat mengelola ' + (jenis === 'ik' ? 'indikator kinerja.' : 'program.'));
+        if (!semua.some(r => r.Jenis === 'sasaran' && String(r.ID) === ikId)) throw new Error('Pilih tujuan / sasaran program terlebih dahulu.');
         baris.Induk = ikId;
         baris.Teks = bersih_(p.teks, 300);
-        if (baris.Teks.length < 5) throw new Error('Nama IK terlalu pendek (minimal 5 huruf).');
-        baris.Satuan = MONEV_SATUAN.indexOf(p.satuan) >= 0 ? p.satuan : '%';
+        if (baris.Teks.length < 5) throw new Error('Nama ' + (jenis === 'ik' ? 'IK' : 'program') + ' terlalu pendek (minimal 5 huruf).');
+        if (jenis === 'ik') baris.Satuan = MONEV_SATUAN.indexOf(p.satuan) >= 0 ? p.satuan : '%';
       } else {
         if (!semua.some(r => r.Jenis === 'ik' && String(r.ID) === ikId)) throw new Error('Pilih indikator kinerja (IK) terlebih dahulu.');
         if (!monevBolehUbah_(user, jenis, ikId)) throw new Error('Anda tidak berwenang mengubah ' + jenis + ' untuk IK ini.');
@@ -1363,13 +1364,14 @@ function apiHapusMonev(token, id) {
     if (r.Jenis === 'sasaran') {
       if (user.role !== 'admin') throw new Error('Hanya admin yang dapat menghapus sasaran program.');
       if (semua.some(x => x.Jenis === 'ik' && String(x.Induk) === id)) throw new Error('Hapus atau pindahkan dulu IK yang ada di bawah sasaran ini.');
-    } else if (r.Jenis === 'ik') {
-      if (user.role !== 'admin') throw new Error('Hanya admin yang dapat menghapus indikator kinerja.');
+    } else if (r.Jenis === 'ik' || r.Jenis === 'program') {
+      if (user.role !== 'admin') throw new Error('Hanya admin yang dapat menghapus data ini.');
     } else {
       if (!monevBolehUbah_(user, r.Jenis, r.Induk)) throw new Error('Anda tidak berwenang menghapus data ini.');
       if ((r.Jenis === 'catatan' || r.Jenis === 'keterangan') && user.role !== 'admin' && String(r.DibuatOleh) !== user.username) throw new Error('Anda hanya dapat menghapus isian yang Anda buat sendiri.');
     }
     let hapus = [r];
+    if (r.Jenis === 'sasaran') hapus = hapus.concat(semua.filter(x => x.Jenis === 'program' && String(x.Induk) === id));
     if (r.Jenis === 'ik') {
       hapus = hapus.concat(semua.filter(x => String(x.Induk) === id && x.Jenis !== 'ik'));
       const bukti = readTable_(SHEET.BUKTI).filter(b => String(b.IndikatorID) === 'MV:' + id);

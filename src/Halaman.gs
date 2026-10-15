@@ -998,7 +998,7 @@ function pagePanduan_(m, user) {
 /* ---------------- Halaman: Monev Kinerja ---------------- */
 
 const MONEV_VIEW_ = [
-  { id: 'sasaran', label: 'Tujuan / Sasaran Program', icon: 'flag' },
+  { id: 'program', label: 'Program', icon: 'account_tree' },
   { id: 'ik', label: 'IK Tujuan Program', icon: 'rule' },
   { id: 'target', label: 'Target', icon: 'track_changes' },
   { id: 'realisasi', label: 'Realisasi', icon: 'fact_check' },
@@ -1017,6 +1017,7 @@ function monevModel_(tahun) {
     .sort((a, b) => ((urut[a.sasaranId] === undefined ? 999 : urut[a.sasaranId]) - (urut[b.sasaranId] === undefined ? 999 : urut[b.sasaranId])) || a.id.localeCompare(b.id));
   const angka = { target: {}, realisasi: {} };
   rows.forEach(r => { if ((r.Jenis === 'target' || r.Jenis === 'realisasi') && Number(r.Tahun) === tahun) angka[r.Jenis][String(r.Induk) + '|' + r.TW] = { id: String(r.ID), v: Number(r.Angka) }; });
+  const program = rows.filter(r => r.Jenis === 'program').sort((a, b) => String(a.ID).localeCompare(String(b.ID)));
   const unit = {}, catatan = [], keterangan = [];
   rows.forEach(r => {
     if (r.Jenis === 'unit') (unit[String(r.Induk)] = unit[String(r.Induk)] || []).push(r);
@@ -1026,7 +1027,7 @@ function monevModel_(tahun) {
   const urutBaru = (a, b) => String(b.DibuatPada).localeCompare(String(a.DibuatPada));
   catatan.sort(urutBaru); keterangan.sort(urutBaru);
   const bukti = readTable_(SHEET.BUKTI).filter(b => String(b.IndikatorID).indexOf('MV:') === 0 && Number(b.Tahun) === tahun);
-  return { rows: rows, sasaran: sasaran, ik: ik, ikMap: ik.reduce((o, i) => { o[i.id] = i; return o; }, {}), sasaranMap: sasaran.reduce((o, r) => { o[String(r.ID)] = String(r.Teks); return o; }, {}), angka: angka, unit: unit, catatan: catatan, keterangan: keterangan, bukti: bukti };
+  return { rows: rows, sasaran: sasaran, program: program, ik: ik, ikMap: ik.reduce((o, i) => { o[i.id] = i; return o; }, {}), sasaranMap: sasaran.reduce((o, r) => { o[String(r.ID)] = String(r.Teks); return o; }, {}), angka: angka, unit: unit, catatan: catatan, keterangan: keterangan, bukti: bukti };
 }
 
 function mvBtn_(label, jenis, data, ikon, cls) {
@@ -1052,23 +1053,37 @@ function monevMeta_(mm, user) {
   })) + '"></div>';
 }
 
-function viewMonevSasaran_(mm, user) {
+function viewMonevDaftar_(mm, user) {
   const adm = user.role === 'admin';
-  let h = '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Tujuan / Sasaran Program</h2><p class="muted sm">Sasaran yang ingin dicapai program. Tiap sasaran memiliki satu atau lebih indikator kinerja (IK).</p></div>' +
+  let h = '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Tujuan / Sasaran Program</h2><p class="muted sm">Pilih satu sasaran untuk membuka Program, IK, Target, Realisasi, Bukti Dukung, Unit PIC, Catatan, dan Keterangannya.</p></div>' +
     (adm ? mvBtn_('Tambah Sasaran', 'sasaran', {}, 'add_circle') : '') + '</div>';
   if (!mm.sasaran.length) return h + kosong_(adm ? 'Belum ada sasaran program. Klik “Tambah Sasaran” untuk memulai.' : 'Belum ada sasaran program.', 'flag') + '</section>';
   h += '<div class="stack">' + mm.sasaran.map((r, n) => {
-    const jml = mm.ik.filter(i => i.sasaranId === String(r.ID)).length;
-    return '<div class="tung"><div class="tung-main"><b>' + (n + 1) + '. ' + esc_(r.Teks) + '</b><span class="muted sm">' + esc_(r.ID) + ' · ' + jml + ' indikator kinerja</span></div>' +
-      '<div class="tung-end">' + (adm ? mvBtn_('Ubah', 'sasaran', { id: String(r.ID), teks: String(r.Teks) }, '', 'btn-ghost') + mvHapus_(r.ID) : '') + '</div></div>';
+    const id = String(r.ID), ikS = mm.ik.filter(i => i.sasaranId === id);
+    const jmlP = mm.program.filter(p => String(p.Induk) === id).length;
+    const jmlB = mm.bukti.filter(b => ikS.some(i => 'MV:' + i.id === String(b.IndikatorID))).length;
+    return '<div class="tung"><div class="tung-main"><b>' + (n + 1) + '. ' + esc_(r.Teks) + '</b><div class="chips-row">' +
+      chip_('info', jmlP + ' program') + ' ' + chip_('info', ikS.length + ' IK') + ' ' + chip_('mute', jmlB + ' bukti') + '</div></div>' +
+      '<div class="tung-end">' + '<button type="button" class="btn btn-primary btn-sm" data-nav="monev" data-params=\'' + esc_(JSON.stringify({ sasaran: id })) + '\'>Buka' + ic_('chevron_right') + '</button>' +
+      (adm ? mvBtn_('Ubah', 'sasaran', { id: id, teks: String(r.Teks) }, '', 'btn-ghost') + mvHapus_(r.ID) : '') + '</div></div>';
   }).join('') + '</div></section>';
+  return h;
+}
+
+function viewMonevProgram_(mm, user) {
+  const adm = user.role === 'admin', sr = mm.sasaran[0];
+  let h = '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Program</h2><p class="muted sm">Program yang dijalankan untuk mencapai sasaran ini.</p></div>' +
+    (adm ? mvBtn_('Tambah Program', 'program', { induk: String(sr.ID) }, 'add_circle') : '') + '</div>';
+  if (!mm.program.length) return h + kosong_(adm ? 'Belum ada program. Klik “Tambah Program” untuk memulai.' : 'Belum ada program.', 'account_tree') + '</section>';
+  h += '<div class="stack">' + mm.program.map((p, n) => '<div class="tung"><div class="tung-main"><b>' + (n + 1) + '. ' + esc_(p.Teks) + '</b><span class="muted sm">' + esc_(p.ID) + '</span></div>' +
+    '<div class="tung-end">' + (adm ? mvBtn_('Ubah', 'program', { id: String(p.ID), induk: String(sr.ID), teks: String(p.Teks) }, '', 'btn-ghost') + mvHapus_(p.ID) : '') + '</div></div>').join('') + '</div></section>';
   return h;
 }
 
 function viewMonevIk_(mm, user) {
   const adm = user.role === 'admin';
   let h = '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Indikator Kinerja (IK) Tujuan Program</h2><p class="muted sm">Ukuran keberhasilan setiap sasaran program, lengkap dengan satuan dan unit PIC.</p></div>' +
-    (adm && mm.sasaran.length ? mvBtn_('Tambah IK', 'ik', {}, 'add_circle') : '') + '</div>';
+    (adm && mm.sasaran.length ? mvBtn_('Tambah IK', 'ik', { induk: mm.sasaran.length === 1 ? String(mm.sasaran[0].ID) : '' }, 'add_circle') : '') + '</div>';
   if (!mm.sasaran.length) return h + kosong_('Tambahkan sasaran program terlebih dahulu di sub-menu “Tujuan / Sasaran Program”.', 'flag') + '</section>';
   if (!mm.ik.length) return h + kosong_(adm ? 'Belum ada IK. Klik “Tambah IK” untuk memulai.' : 'Belum ada IK.', 'rule') + '</section>';
   mm.sasaran.forEach(sr => {
@@ -1086,12 +1101,12 @@ function viewMonevIk_(mm, user) {
 function viewMonevAngka_(mm, user, params, rute, jenis, tw) {
   const adm = user.role === 'admin';
   const labelJ = jenis === 'target' ? 'Target' : 'Realisasi';
-  let h = '<div class="seg seg-sub" role="group" aria-label="Triwulan">' + tabsInd_(rute, params, 'tw', MONEV_TWTAB_, tw, { view: jenis }) + '</div>';
+  let h = '<div class="seg seg-sub" role="group" aria-label="Triwulan">' + tabsInd_(rute, params, 'tw', MONEV_TWTAB_, tw, { view: jenis, sasaran: params.sasaran }) + '</div>';
   const bolehTambah = adm || (jenis === 'realisasi' && user.role === 'pic');
   h += '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">' + labelJ + ' ' + esc_(tw.replace('TW', 'Triwulan ')) + ' — ' + mm.tahun + '</h2>' +
     '<p class="muted sm">' + (jenis === 'target' ? 'Target tiap IK pada triwulan ini. Hanya admin yang dapat mengisi atau mengubahnya.' : 'Realisasi tiap IK pada triwulan ini. Admin dan PIC unit penanggung jawab dapat mengisinya; capaian dihitung terhadap target triwulan yang sama.') + '</p></div>' +
     (bolehTambah && mm.ik.length ? mvBtn_('Tambah ' + labelJ, jenis, { tw: tw }, 'add_circle') : '') + '</div>';
-  if (!mm.ik.length) return h + kosong_('Belum ada IK. Tambahkan dulu di sub-menu “IK Tujuan Program”.', 'rule') + '</section>';
+  if (!mm.ik.length) return h + kosong_('Belum ada IK. Tambahkan dulu di tab “IK Tujuan Program”.', 'rule') + '</section>';
   h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Indikator kinerja</th>' + (jenis === 'realisasi' ? '<th class="r">Target ' + esc_(tw) + '</th>' : '') + '<th class="r">' + labelJ + ' ' + esc_(tw) + '</th>' + (jenis === 'realisasi' ? '<th>Capaian</th>' : '') + '<th></th></tr></thead><tbody>';
   mm.ik.forEach(i => {
     const a = mm.angka[jenis][i.id + '|' + tw], tg = mm.angka.target[i.id + '|' + tw];
@@ -1112,7 +1127,7 @@ function viewMonevBukti_(mm, user) {
   const bisaMana = mm.ik.filter(i => monevBolehUbah_(user, 'bukti', i.id));
   let h = '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Bukti Dukung — ' + mm.tahun + '</h2><p class="muted sm">Unggah dokumen pendukung capaian tiap IK (PDF, gambar, Word, Excel, PowerPoint, CSV, TXT; maksimal 8 MB per berkas). Tersimpan di Google Drive.</p></div>' +
     (bisaMana.length ? '<button type="button" class="btn btn-primary btn-sm" data-act="mbukti-form" data-json="' + esc_(JSON.stringify({})) + '">' + ic_('upload_file') + 'Unggah Bukti</button>' : '') + '</div>';
-  if (!mm.ik.length) return h + kosong_('Belum ada IK. Tambahkan dulu di sub-menu “IK Tujuan Program”.', 'rule') + '</section>';
+  if (!mm.ik.length) return h + kosong_('Belum ada IK. Tambahkan dulu di tab “IK Tujuan Program”.', 'rule') + '</section>';
   h += '<div class="stack">' + mm.ik.map(i => {
     const li = mm.bukti.filter(b => String(b.IndikatorID) === 'MV:' + i.id).sort((a, b) => String(b.DiunggahPada).localeCompare(String(a.DiunggahPada)));
     const boleh = monevBolehUbah_(user, 'bukti', i.id);
@@ -1131,7 +1146,7 @@ function viewMonevUnit_(mm, user) {
   const adm = user.role === 'admin';
   let h = '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Unit PIC</h2><p class="muted sm">Unit / bidang dan PIC penanggung jawab tiap IK. PIC hanya dapat mengisi realisasi, catatan, keterangan, dan bukti untuk IK milik unitnya.</p></div>' +
     (adm && mm.ik.length ? mvBtn_('Tambah Unit PIC', 'unit', {}, 'add_circle') : '') + '</div>';
-  if (!mm.ik.length) return h + kosong_('Belum ada IK. Tambahkan dulu di sub-menu “IK Tujuan Program”.', 'rule') + '</section>';
+  if (!mm.ik.length) return h + kosong_('Belum ada IK. Tambahkan dulu di tab “IK Tujuan Program”.', 'rule') + '</section>';
   h += '<div class="stack">' + mm.ik.map(i => {
     const u = mm.unit[i.id] || [];
     return '<div class="tung"><div class="tung-main"><b>' + esc_(i.nama) + '</b><span class="muted sm">' + esc_(i.id) + '</span><div class="chips-row">' +
@@ -1148,7 +1163,7 @@ function viewMonevTeks_(mm, user, jenis) {
   const bisaTambah = mm.ik.some(i => monevBolehUbah_(user, jenis, i.id));
   let h = '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">' + judul + ' — ' + mm.tahun + '</h2><p class="muted sm">' + (jenis === 'catatan' ? 'Catatan pelaksanaan, kendala, atau tindak lanjut tiap IK.' : 'Keterangan tambahan yang menjelaskan target atau capaian tiap IK.') + ' Dapat dikaitkan ke triwulan tertentu.</p></div>' +
     (bisaTambah ? mvBtn_('Tambah ' + judul, jenis, {}, 'add_circle') : '') + '</div>';
-  if (!mm.ik.length) return h + kosong_('Belum ada IK. Tambahkan dulu di sub-menu “IK Tujuan Program”.', 'rule') + '</section>';
+  if (!mm.ik.length) return h + kosong_('Belum ada IK. Tambahkan dulu di tab “IK Tujuan Program”.', 'rule') + '</section>';
   if (!list.length) return h + kosong_('Belum ada ' + judul.toLowerCase() + '.', 'edit_note') + '</section>';
   h += '<div class="stack">' + list.map(r => {
     const i = mm.ikMap[String(r.Induk)];
@@ -1160,15 +1175,27 @@ function viewMonevTeks_(mm, user, jenis) {
 }
 
 function pageMonev_(m, user, params, ctx) {
-  const mm = monevModel_(m.tahun);
-  mm.tahun = m.tahun;
-  const view = MONEV_VIEW_.some(v => v.id === params.view) ? params.view : 'sasaran';
+  const all = monevModel_(m.tahun);
+  all.tahun = m.tahun;
+  const sr = params.sasaran ? all.sasaran.find(r => String(r.ID) === String(params.sasaran)) : null;
+  if (!sr) {
+    return pageHead_('Monev Kinerja', 'Pemantauan dan evaluasi kinerja per tujuan / sasaran program.', '<span class="chip chip-info">' + all.sasaran.length + ' sasaran</span>') +
+      monevMeta_(all, user) + viewMonevDaftar_(all, user);
+  }
+  const sid = String(sr.ID), ikS = all.ik.filter(i => i.sasaranId === sid), ids = ikS.map(i => i.id);
+  const mm = Object.assign({}, all, {
+    sasaran: [sr], ik: ikS, program: all.program.filter(p => String(p.Induk) === sid),
+    catatan: all.catatan.filter(r => ids.indexOf(String(r.Induk)) >= 0), keterangan: all.keterangan.filter(r => ids.indexOf(String(r.Induk)) >= 0),
+    bukti: all.bukti.filter(b => ids.some(x => 'MV:' + x === String(b.IndikatorID)))
+  });
+  const view = MONEV_VIEW_.some(v => v.id === params.view) ? params.view : 'program';
   const tw = MONEV_TWTAB_.some(t => t.id === params.tw) ? params.tw : 'TW' + Math.ceil(m.bulan / 3);
-  let h = pageHead_('Monev Kinerja', 'Pemantauan dan evaluasi kinerja: sasaran program, indikator kinerja, target dan realisasi per triwulan, bukti dukung, unit PIC, catatan, serta keterangan.', '<span class="chip chip-info">' + mm.ik.length + ' IK</span>');
-  h += '<div class="seg seg-main" role="group" aria-label="Sub-menu Monev Kinerja">' + tabsInd_('monev', params, 'view', MONEV_VIEW_, view) + '</div>';
+  let h = '<nav class="crumb" aria-label="Navigasi"><button type="button" class="btn btn-ghost btn-sm" data-nav="monev" data-params="{}">' + ic_('arrow_back') + 'Semua sasaran</button></nav>';
+  h += pageHead_(sr.Teks, 'Tujuan / Sasaran Program · ' + sid, '<span class="chip chip-info">' + ikS.length + ' IK</span>');
+  h += '<div class="seg seg-main" role="group" aria-label="Isi sasaran program">' + tabsInd_('monev', params, 'view', MONEV_VIEW_, view, { sasaran: sid }) + '</div>';
   h += monevMeta_(mm, user);
-  if (user.role === 'pic' && !mm.ik.some(i => monevBolehUbah_(user, 'realisasi', i.id))) h += '<div class="card card-flat card-pad muted sm">Belum ada IK yang ditugaskan ke unit atau akun Anda. Hubungi admin untuk menetapkan Unit PIC.</div>';
-  if (view === 'sasaran') return h + viewMonevSasaran_(mm, user);
+  if (user.role === 'pic' && !ikS.some(i => monevBolehUbah_(user, 'realisasi', i.id))) h += '<div class="card card-flat card-pad muted sm">Belum ada IK pada sasaran ini yang ditugaskan ke unit atau akun Anda. Hubungi admin untuk menetapkan Unit PIC.</div>';
+  if (view === 'program') return h + viewMonevProgram_(mm, user);
   if (view === 'ik') return h + viewMonevIk_(mm, user);
   if (view === 'target' || view === 'realisasi') return h + viewMonevAngka_(mm, user, params, 'monev', view, tw);
   if (view === 'bukti') return h + viewMonevBukti_(mm, user);
