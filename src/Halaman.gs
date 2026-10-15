@@ -440,7 +440,6 @@ function pageIndikatorGen_(judul, sub, jenis, m, user, params, ctx, rute) {
 }
 function pageIndikator_(m, u, p, c) { return pageIndikatorGen_('Indikator Kesehatan', 'Seluruh indikator yang dipantau Dinas — lihat daftar, pencapaian terhadap target, atau capaian per periode.', '', m, u, p, c, 'indikator'); }
 function pageIku_(m, u, p, c) { return pageIndikatorGen_('Indikator Kinerja Utama (IKU)', 'Indikator kinerja utama perangkat daerah.', 'IKU', m, u, p, c, 'iku'); }
-function pageSpm_(m, u, p, c) { return pageIndikatorGen_('Indikator Standar Pelayanan Minimal (SPM)', 'Indikator SPM bidang kesehatan.', 'SPM', m, u, p, c, 'spm'); }
 
 /* ---------------- Halaman: Capaian & Analitik ---------------- */
 
@@ -996,6 +995,187 @@ function pagePanduan_(m, user) {
     q('Keamanan', '<p>Ganti kata sandi awal segera di menu Pengaturan. Sesi berakhir otomatis setelah 6 jam; keluar dengan tombol Keluar pada menu pengguna.</p>') + '</section>';
 }
 
+/* ---------------- Halaman: Monev Kinerja ---------------- */
+
+const MONEV_VIEW_ = [
+  { id: 'sasaran', label: 'Tujuan / Sasaran Program', icon: 'flag' },
+  { id: 'ik', label: 'IK Tujuan Program', icon: 'rule' },
+  { id: 'target', label: 'Target', icon: 'track_changes' },
+  { id: 'realisasi', label: 'Realisasi', icon: 'fact_check' },
+  { id: 'bukti', label: 'Bukti Dukung', icon: 'upload_file' },
+  { id: 'unit', label: 'Unit PIC', icon: 'group' },
+  { id: 'catatan', label: 'Catatan', icon: 'edit_note' },
+  { id: 'keterangan', label: 'Keterangan', icon: 'description' }
+];
+const MONEV_TWTAB_ = [{ id: 'TW1', label: 'TW 1' }, { id: 'TW2', label: 'TW 2' }, { id: 'TW3', label: 'TW 3' }, { id: 'TW4', label: 'TW 4' }];
+
+function monevModel_(tahun) {
+  const rows = readTable_(SHEET.MONEV);
+  const sasaran = rows.filter(r => r.Jenis === 'sasaran').sort((a, b) => String(a.ID).localeCompare(String(b.ID)));
+  const urut = {}; sasaran.forEach((r, i) => { urut[String(r.ID)] = i; });
+  const ik = rows.filter(r => r.Jenis === 'ik').map(r => ({ id: String(r.ID), sasaranId: String(r.Induk), nama: String(r.Teks), satuan: String(r.Satuan || '%') }))
+    .sort((a, b) => ((urut[a.sasaranId] === undefined ? 999 : urut[a.sasaranId]) - (urut[b.sasaranId] === undefined ? 999 : urut[b.sasaranId])) || a.id.localeCompare(b.id));
+  const angka = { target: {}, realisasi: {} };
+  rows.forEach(r => { if ((r.Jenis === 'target' || r.Jenis === 'realisasi') && Number(r.Tahun) === tahun) angka[r.Jenis][String(r.Induk) + '|' + r.TW] = { id: String(r.ID), v: Number(r.Angka) }; });
+  const unit = {}, catatan = [], keterangan = [];
+  rows.forEach(r => {
+    if (r.Jenis === 'unit') (unit[String(r.Induk)] = unit[String(r.Induk)] || []).push(r);
+    else if (r.Jenis === 'catatan' && Number(r.Tahun) === tahun) catatan.push(r);
+    else if (r.Jenis === 'keterangan' && Number(r.Tahun) === tahun) keterangan.push(r);
+  });
+  const urutBaru = (a, b) => String(b.DibuatPada).localeCompare(String(a.DibuatPada));
+  catatan.sort(urutBaru); keterangan.sort(urutBaru);
+  const bukti = readTable_(SHEET.BUKTI).filter(b => String(b.IndikatorID).indexOf('MV:') === 0 && Number(b.Tahun) === tahun);
+  return { rows: rows, sasaran: sasaran, ik: ik, ikMap: ik.reduce((o, i) => { o[i.id] = i; return o; }, {}), sasaranMap: sasaran.reduce((o, r) => { o[String(r.ID)] = String(r.Teks); return o; }, {}), angka: angka, unit: unit, catatan: catatan, keterangan: keterangan, bukti: bukti };
+}
+
+function mvBtn_(label, jenis, data, ikon, cls) {
+  data = Object.assign({ jenis: jenis }, data || {});
+  return '<button type="button" class="btn ' + (cls || 'btn-primary') + ' btn-sm" data-act="monev-form" data-json="' + esc_(JSON.stringify(data)) + '">' + (ikon ? ic_(ikon) : '') + esc_(label) + '</button>';
+}
+function mvHapus_(id, label) {
+  return '<button type="button" class="btn btn-ghost btn-sm" data-act="monev-hapus" data-id="' + esc_(id) + '">' + esc_(label || 'Hapus') + '</button>';
+}
+function mvIkLabel_(mm, i) { return (mm.sasaranMap[i.sasaranId] ? String(mm.sasaranMap[i.sasaranId]).slice(0, 40) + ' › ' : '') + i.nama; }
+function mvUnitChips_(mm, ikId) {
+  const u = mm.unit[ikId] || [];
+  return u.length ? u.map(x => chip_('info', String(x.Bidang) + (x.PIC ? ' · ' + x.PIC : ''))).join(' ') : chip_('mute', 'Belum ada unit PIC');
+}
+
+function monevMeta_(mm, user) {
+  const picUsers = readTable_(SHEET.USERS).filter(u => u.Role === 'pic' && String(u.Aktif).toLowerCase() !== 'tidak').map(u => ({ v: String(u.Username), t: String(u.Nama), b: String(u.Bidang || '') }));
+  return '<div id="monev-meta" hidden data-json="' + esc_(JSON.stringify({
+    sasaran: mm.sasaran.map(r => ({ v: String(r.ID), t: String(r.Teks).slice(0, 90) })),
+    ik: mm.ik.map(i => ({ v: i.id, t: mvIkLabel_(mm, i), s: i.satuan, bb: monevBolehUbah_(user, 'realisasi', i.id) })),
+    bidang: readTable_(SHEET.BIDANG).map(b => String(b.Nama)),
+    pic: picUsers
+  })) + '"></div>';
+}
+
+function viewMonevSasaran_(mm, user) {
+  const adm = user.role === 'admin';
+  let h = '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Tujuan / Sasaran Program</h2><p class="muted sm">Sasaran yang ingin dicapai program. Tiap sasaran memiliki satu atau lebih indikator kinerja (IK).</p></div>' +
+    (adm ? mvBtn_('Tambah Sasaran', 'sasaran', {}, 'add_circle') : '') + '</div>';
+  if (!mm.sasaran.length) return h + kosong_(adm ? 'Belum ada sasaran program. Klik “Tambah Sasaran” untuk memulai.' : 'Belum ada sasaran program.', 'flag') + '</section>';
+  h += '<div class="stack">' + mm.sasaran.map((r, n) => {
+    const jml = mm.ik.filter(i => i.sasaranId === String(r.ID)).length;
+    return '<div class="tung"><div class="tung-main"><b>' + (n + 1) + '. ' + esc_(r.Teks) + '</b><span class="muted sm">' + esc_(r.ID) + ' · ' + jml + ' indikator kinerja</span></div>' +
+      '<div class="tung-end">' + (adm ? mvBtn_('Ubah', 'sasaran', { id: String(r.ID), teks: String(r.Teks) }, '', 'btn-ghost') + mvHapus_(r.ID) : '') + '</div></div>';
+  }).join('') + '</div></section>';
+  return h;
+}
+
+function viewMonevIk_(mm, user) {
+  const adm = user.role === 'admin';
+  let h = '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Indikator Kinerja (IK) Tujuan Program</h2><p class="muted sm">Ukuran keberhasilan setiap sasaran program, lengkap dengan satuan dan unit PIC.</p></div>' +
+    (adm && mm.sasaran.length ? mvBtn_('Tambah IK', 'ik', {}, 'add_circle') : '') + '</div>';
+  if (!mm.sasaran.length) return h + kosong_('Tambahkan sasaran program terlebih dahulu di sub-menu “Tujuan / Sasaran Program”.', 'flag') + '</section>';
+  if (!mm.ik.length) return h + kosong_(adm ? 'Belum ada IK. Klik “Tambah IK” untuk memulai.' : 'Belum ada IK.', 'rule') + '</section>';
+  mm.sasaran.forEach(sr => {
+    const li = mm.ik.filter(i => i.sasaranId === String(sr.ID));
+    if (!li.length) return;
+    h += '<h3 class="h3">' + esc_(sr.Teks) + '</h3><div class="stack">' + li.map(i =>
+      '<div class="tung"><div class="tung-main"><b>' + esc_(i.nama) + '</b><span class="muted sm">' + esc_(i.id) + ' · satuan ' + esc_(i.satuan) + '</span><div class="chips-row">' + mvUnitChips_(mm, i.id) + '</div></div>' +
+      '<div class="tung-end">' + (adm ? mvBtn_('Ubah', 'ik', { id: i.id, induk: i.sasaranId, teks: i.nama, satuan: i.satuan }, '', 'btn-ghost') + mvHapus_(i.id) : '') + '</div></div>').join('') + '</div>';
+  });
+  const tanpa = mm.ik.filter(i => !mm.sasaranMap[i.sasaranId]);
+  if (tanpa.length) h += '<h3 class="h3">Tanpa sasaran</h3><div class="stack">' + tanpa.map(i => '<div class="tung"><div class="tung-main"><b>' + esc_(i.nama) + '</b></div><div class="tung-end">' + (adm ? mvBtn_('Ubah', 'ik', { id: i.id, induk: '', teks: i.nama, satuan: i.satuan }, '', 'btn-ghost') + mvHapus_(i.id) : '') + '</div></div>').join('') + '</div>';
+  return h + '</section>';
+}
+
+function viewMonevAngka_(mm, user, params, rute, jenis, tw) {
+  const adm = user.role === 'admin';
+  const labelJ = jenis === 'target' ? 'Target' : 'Realisasi';
+  let h = '<div class="seg seg-sub" role="group" aria-label="Triwulan">' + tabsInd_(rute, params, 'tw', MONEV_TWTAB_, tw, { view: jenis }) + '</div>';
+  const bolehTambah = adm || (jenis === 'realisasi' && user.role === 'pic');
+  h += '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">' + labelJ + ' ' + esc_(tw.replace('TW', 'Triwulan ')) + ' — ' + mm.tahun + '</h2>' +
+    '<p class="muted sm">' + (jenis === 'target' ? 'Target tiap IK pada triwulan ini. Hanya admin yang dapat mengisi atau mengubahnya.' : 'Realisasi tiap IK pada triwulan ini. Admin dan PIC unit penanggung jawab dapat mengisinya; capaian dihitung terhadap target triwulan yang sama.') + '</p></div>' +
+    (bolehTambah && mm.ik.length ? mvBtn_('Tambah ' + labelJ, jenis, { tw: tw }, 'add_circle') : '') + '</div>';
+  if (!mm.ik.length) return h + kosong_('Belum ada IK. Tambahkan dulu di sub-menu “IK Tujuan Program”.', 'rule') + '</section>';
+  h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Indikator kinerja</th>' + (jenis === 'realisasi' ? '<th class="r">Target ' + esc_(tw) + '</th>' : '') + '<th class="r">' + labelJ + ' ' + esc_(tw) + '</th>' + (jenis === 'realisasi' ? '<th>Capaian</th>' : '') + '<th></th></tr></thead><tbody>';
+  mm.ik.forEach(i => {
+    const a = mm.angka[jenis][i.id + '|' + tw], tg = mm.angka.target[i.id + '|' + tw];
+    const boleh = monevBolehUbah_(user, jenis, i.id);
+    let cap = null, tier = 'belum';
+    if (jenis === 'realisasi' && a && tg) { cap = hitungCap_(a.v, tg.v, 'Naik'); tier = tierDari_(cap); }
+    h += '<tr><td><b class="heat-name">' + esc_(i.nama) + '</b><span class="muted sm">' + esc_(i.id) + ' · ' + esc_(mm.sasaranMap[i.sasaranId] || '') + '</span></td>' +
+      (jenis === 'realisasi' ? '<td class="r nowrap">' + (tg ? esc_(val_(tg.v, i.satuan === '%' ? '%' : '')) : '—') + '</td>' : '') +
+      '<td class="r nowrap">' + (a ? '<b>' + esc_(val_(a.v, i.satuan === '%' ? '%' : '')) + '</b>' : '<span class="muted">Belum diisi</span>') + '</td>' +
+      (jenis === 'realisasi' ? '<td class="cap-cell">' + (cap === null ? '—' : '<b>' + esc_(pct_(cap)) + '</b>' + bar_(cap, tier)) + '</td>' : '') +
+      '<td class="r nowrap">' + (boleh ? (a ? mvBtn_('Ubah', jenis, { id: a.id, induk: i.id, tw: tw, angka: a.v }, '', 'btn-ghost') + mvHapus_(a.id) : mvBtn_('Isi', jenis, { induk: i.id, tw: tw }, '', 'btn-ghost')) : '') + '</td></tr>';
+  });
+  return h + '</tbody></table></div></section>';
+}
+
+function viewMonevBukti_(mm, user) {
+  const adm = user.role === 'admin';
+  const bisaMana = mm.ik.filter(i => monevBolehUbah_(user, 'bukti', i.id));
+  let h = '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Bukti Dukung — ' + mm.tahun + '</h2><p class="muted sm">Unggah dokumen pendukung capaian tiap IK (PDF, gambar, Word, Excel, PowerPoint, CSV, TXT; maksimal 8 MB per berkas). Tersimpan di Google Drive.</p></div>' +
+    (bisaMana.length ? '<button type="button" class="btn btn-primary btn-sm" data-act="mbukti-form" data-json="' + esc_(JSON.stringify({})) + '">' + ic_('upload_file') + 'Unggah Bukti</button>' : '') + '</div>';
+  if (!mm.ik.length) return h + kosong_('Belum ada IK. Tambahkan dulu di sub-menu “IK Tujuan Program”.', 'rule') + '</section>';
+  h += '<div class="stack">' + mm.ik.map(i => {
+    const li = mm.bukti.filter(b => String(b.IndikatorID) === 'MV:' + i.id).sort((a, b) => String(b.DiunggahPada).localeCompare(String(a.DiunggahPada)));
+    const boleh = monevBolehUbah_(user, 'bukti', i.id);
+    return '<div class="tung"><div class="tung-main"><b>' + esc_(i.nama) + '</b><span class="muted sm">' + esc_(i.id) + ' · ' + li.length + ' berkas</span>' +
+      (li.length ? '<ul class="bk-list">' + li.map(b => {
+        const hapusOk = adm || (boleh && String(b.DiunggahOleh) === user.username);
+        return '<li class="bk-item"><span class="bk-ext">' + esc_(b.Tipe) + '</span><div class="bk-main"><b>' + esc_(b.NamaFile) + '</b><span class="muted sm">' + (Number(b.Bulan) ? 'TW ' + Number(b.Bulan) : 'Umum') + ' · ' + esc_(b.DiunggahOleh) + ' · ' + esc_(b.DiunggahPada) + '</span>' + (b.Catatan ? '<span class="sm">' + esc_(b.Catatan) + '</span>' : '') + '</div>' +
+          '<div class="bk-act"><button type="button" class="btn btn-ghost btn-sm" data-act="mbukti-unduh" data-id="' + esc_(b.ID) + '">Unduh</button>' + (hapusOk ? '<button type="button" class="btn btn-ghost btn-sm" data-act="mbukti-hapus" data-id="' + esc_(b.ID) + '">Hapus</button>' : '') + '</div></li>';
+      }).join('') + '</ul>' : '') + '</div>' +
+      '<div class="tung-end">' + (boleh ? '<button type="button" class="btn btn-ghost btn-sm" data-act="mbukti-form" data-json="' + esc_(JSON.stringify({ ikId: i.id })) + '">' + ic_('upload_file') + 'Unggah</button>' : '') + '</div></div>';
+  }).join('') + '</div></section>';
+  return h;
+}
+
+function viewMonevUnit_(mm, user) {
+  const adm = user.role === 'admin';
+  let h = '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Unit PIC</h2><p class="muted sm">Unit / bidang dan PIC penanggung jawab tiap IK. PIC hanya dapat mengisi realisasi, catatan, keterangan, dan bukti untuk IK milik unitnya.</p></div>' +
+    (adm && mm.ik.length ? mvBtn_('Tambah Unit PIC', 'unit', {}, 'add_circle') : '') + '</div>';
+  if (!mm.ik.length) return h + kosong_('Belum ada IK. Tambahkan dulu di sub-menu “IK Tujuan Program”.', 'rule') + '</section>';
+  h += '<div class="stack">' + mm.ik.map(i => {
+    const u = mm.unit[i.id] || [];
+    return '<div class="tung"><div class="tung-main"><b>' + esc_(i.nama) + '</b><span class="muted sm">' + esc_(i.id) + '</span><div class="chips-row">' +
+      (u.length ? u.map(x => '<span class="chip chip-info">' + esc_(x.Bidang) + (x.PIC ? ' · ' + esc_(x.PIC) : '') + (adm ? ' <button type="button" class="chip-x" data-act="monev-hapus" data-id="' + esc_(x.ID) + '" aria-label="Hapus unit ' + esc_(x.Bidang) + '">×</button>' : '') + '</span>').join('') : chip_('crit', 'Belum ada unit PIC')) + '</div></div>' +
+      '<div class="tung-end">' + (adm ? mvBtn_('Tambah Unit', 'unit', { induk: i.id }, '', 'btn-ghost') : '') + '</div></div>';
+  }).join('') + '</div></section>';
+  return h;
+}
+
+function viewMonevTeks_(mm, user, jenis) {
+  const adm = user.role === 'admin';
+  const judul = jenis === 'catatan' ? 'Catatan' : 'Keterangan';
+  const list = jenis === 'catatan' ? mm.catatan : mm.keterangan;
+  const bisaTambah = mm.ik.some(i => monevBolehUbah_(user, jenis, i.id));
+  let h = '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">' + judul + ' — ' + mm.tahun + '</h2><p class="muted sm">' + (jenis === 'catatan' ? 'Catatan pelaksanaan, kendala, atau tindak lanjut tiap IK.' : 'Keterangan tambahan yang menjelaskan target atau capaian tiap IK.') + ' Dapat dikaitkan ke triwulan tertentu.</p></div>' +
+    (bisaTambah ? mvBtn_('Tambah ' + judul, jenis, {}, 'add_circle') : '') + '</div>';
+  if (!mm.ik.length) return h + kosong_('Belum ada IK. Tambahkan dulu di sub-menu “IK Tujuan Program”.', 'rule') + '</section>';
+  if (!list.length) return h + kosong_('Belum ada ' + judul.toLowerCase() + '.', 'edit_note') + '</section>';
+  h += '<div class="stack">' + list.map(r => {
+    const i = mm.ikMap[String(r.Induk)];
+    const boleh = monevBolehUbah_(user, jenis, r.Induk) && (adm || String(r.DibuatOleh) === user.username);
+    return '<div class="tung"><div class="tung-main"><b>' + esc_(i ? i.nama : r.Induk) + '</b>' + '<span class="blok">' + esc_(r.Teks) + '</span><span class="muted sm">' + (r.TW ? esc_(String(r.TW).replace('TW', 'TW ')) + ' · ' : '') + esc_(r.DibuatOleh) + ' · ' + esc_(tglId_(r.DibuatPada)) + '</span></div>' +
+      '<div class="tung-end">' + (boleh ? mvBtn_('Ubah', jenis, { id: String(r.ID), induk: String(r.Induk), tw: String(r.TW || ''), teks: String(r.Teks) }, '', 'btn-ghost') + mvHapus_(r.ID) : '') + '</div></div>';
+  }).join('') + '</div></section>';
+  return h;
+}
+
+function pageMonev_(m, user, params, ctx) {
+  const mm = monevModel_(m.tahun);
+  mm.tahun = m.tahun;
+  const view = MONEV_VIEW_.some(v => v.id === params.view) ? params.view : 'sasaran';
+  const tw = MONEV_TWTAB_.some(t => t.id === params.tw) ? params.tw : 'TW' + Math.ceil(m.bulan / 3);
+  let h = pageHead_('Monev Kinerja', 'Pemantauan dan evaluasi kinerja: sasaran program, indikator kinerja, target dan realisasi per triwulan, bukti dukung, unit PIC, catatan, serta keterangan.', '<span class="chip chip-info">' + mm.ik.length + ' IK</span>');
+  h += '<div class="seg seg-main" role="group" aria-label="Sub-menu Monev Kinerja">' + tabsInd_('monev', params, 'view', MONEV_VIEW_, view) + '</div>';
+  h += monevMeta_(mm, user);
+  if (user.role === 'pic' && !mm.ik.some(i => monevBolehUbah_(user, 'realisasi', i.id))) h += '<div class="card card-flat card-pad muted sm">Belum ada IK yang ditugaskan ke unit atau akun Anda. Hubungi admin untuk menetapkan Unit PIC.</div>';
+  if (view === 'sasaran') return h + viewMonevSasaran_(mm, user);
+  if (view === 'ik') return h + viewMonevIk_(mm, user);
+  if (view === 'target' || view === 'realisasi') return h + viewMonevAngka_(mm, user, params, 'monev', view, tw);
+  if (view === 'bukti') return h + viewMonevBukti_(mm, user);
+  if (view === 'unit') return h + viewMonevUnit_(mm, user);
+  return h + viewMonevTeks_(mm, user, view);
+}
+
 /* ---------------- Router halaman ---------------- */
 
 const PAGES_ = {
@@ -1003,7 +1183,7 @@ const PAGES_ = {
   inputdata: { fn: pageInputData_, title: 'Input Data', roles: ['admin', 'pic'] },
   indikator: { fn: pageIndikator_, title: 'Indikator Kesehatan' },
   iku: { fn: pageIku_, title: 'IKU' },
-  spm: { fn: pageSpm_, title: 'Indikator SPM' },
+  monev: { fn: pageMonev_, title: 'Monev Kinerja' },
   analitik: { fn: pageAnalitik_, title: 'Capaian & Analitik' },
   monitoring: { fn: pageMonitoring_, title: 'Monitoring Pengisian' },
   rekomendasi: { fn: pageRekomendasi_, title: 'Permasalahan & Rekomendasi' },

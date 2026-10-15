@@ -15,7 +15,7 @@
     { id: 'inputdata', label: 'Input Data', icon: 'edit_note', group: 'Indikator', roles: ['admin', 'pic'] },
     { id: 'indikator', label: 'Indikator Kesehatan', icon: 'monitor_heart', group: 'Indikator' },
     { id: 'iku', label: 'IKU', icon: 'flag', group: 'Indikator' },
-    { id: 'spm', label: 'Indikator SPM', icon: 'rule', group: 'Indikator' },
+    { id: 'monev', label: 'Monev Kinerja', icon: 'rule', group: 'Indikator' },
     { id: 'analitik', label: 'Capaian & Analitik', icon: 'insights', group: 'Analisis' },
     { id: 'monitoring', label: 'Monitoring Pengisian', icon: 'fact_check', group: 'Analisis', badge: true },
     { id: 'rekomendasi', label: 'Permasalahan & Rekomendasi', icon: 'lightbulb', group: 'Analisis' },
@@ -71,7 +71,7 @@
     });
   }
   /** Panggil API ber-token. Mengembalikan data atau melempar Error; sesi habis -> kembali ke login. */
-  var PCACHE = {}, READ_API = { apiBootstrap: 1, apiAmbilIsian: 1, apiDaftarBukti: 1, apiUnduhBukti: 1, apiTarikData: 1 };
+  var PCACHE = {}, READ_API = { apiBootstrap: 1, apiAmbilIsian: 1, apiDaftarBukti: 1, apiUnduhBukti: 1, apiTarikData: 1, apiUnduhBuktiMonev: 1 };
   function api(fn, args) {
     if (!READ_API[fn]) pcReset();   // ada perubahan data: buang cache halaman
     args = [AppState.sessionToken].concat(args || []);
@@ -633,6 +633,90 @@
       .catch(function (e) { if (!e.handled) toast(e.message, 'err'); el.disabled = false; });
   }
 
+
+  /* ---------- Monev Kinerja ---------- */
+  var MV_JUDUL = { sasaran: 'Tujuan / Sasaran Program', ik: 'Indikator Kinerja (IK)', target: 'Target', realisasi: 'Realisasi', unit: 'Unit PIC', catatan: 'Catatan', keterangan: 'Keterangan' };
+  var MV_TW = [{ v: 'TW1', t: 'TW 1 (Jan–Mar)' }, { v: 'TW2', t: 'TW 2 (Apr–Jun)' }, { v: 'TW3', t: 'TW 3 (Jul–Sep)' }, { v: 'TW4', t: 'TW 4 (Okt–Des)' }];
+  function mvMeta() { var el = $('#monev-meta'); if (!el) return {}; try { return JSON.parse(el.getAttribute('data-json') || '{}'); } catch (e) { return {}; } }
+  function mvSel(label, name, opts, val) {
+    return '<div class="field"><label for="mv_' + name + '">' + esc(label) + '</label><select class="input" id="mv_' + name + '" name="' + name + '">' +
+      opts.map(function (o) { return '<option value="' + esc(o.v) + '"' + (String(o.v) === String(val == null ? '' : val) ? ' selected' : '') + '>' + esc(o.t) + '</option>'; }).join('') + '</select></div>';
+  }
+  function mvInp(label, name, val, extra) { return '<div class="field"><label for="mv_' + name + '">' + esc(label) + '</label><input class="input" id="mv_' + name + '" name="' + name + '" type="text" value="' + esc(val == null ? '' : val) + '" ' + (extra || '') + '></div>'; }
+  function mvArea(label, name, val, extra) { return '<div class="field"><label for="mv_' + name + '">' + esc(label) + '</label><textarea class="input input-area" id="mv_' + name + '" name="' + name + '" ' + (extra || '') + '>' + esc(val == null ? '' : val) + '</textarea></div>'; }
+  function mvIkOpts(meta, hanyaBisa) {
+    return [{ v: '', t: '— Pilih IK —' }].concat((meta.ik || []).filter(function (i) { return !hanyaBisa || i.bb; }).map(function (i) { return { v: i.v, t: i.t }; }));
+  }
+  function twSekarang() { return 'TW' + Math.ceil(periode().bulan / 3); }
+  function openMonevForm(d) {
+    var meta = mvMeta(), j = d.jenis, edit = !!d.id, h = '';
+    if (j === 'sasaran') h = mvArea('Tujuan / sasaran program', 'teks', d.teks, 'required maxlength="300" rows="3" placeholder="Contoh: Meningkatnya derajat kesehatan ibu dan anak"');
+    else if (j === 'ik') h = mvSel('Tujuan / sasaran program', 'induk', [{ v: '', t: '— Pilih sasaran —' }].concat(meta.sasaran || []), d.induk) +
+      mvArea('Indikator kinerja (IK) tujuan program', 'teks', d.teks, 'required maxlength="300" rows="3" placeholder="Contoh: Persentase ibu hamil yang mendapat pelayanan K4"') +
+      mvSel('Satuan', 'satuan', [{ v: '%', t: 'Persen (%)' }, { v: 'Angka', t: 'Angka' }, { v: 'Jumlah', t: 'Jumlah' }], d.satuan || '%');
+    else {
+      var admin = AppState.user && AppState.user.role === 'admin';
+      h = mvSel('Indikator kinerja (IK)', 'induk', mvIkOpts(meta, !admin), d.induk);
+      if (j === 'target' || j === 'realisasi') h += mvSel('Triwulan', 'tw', MV_TW, d.tw || twSekarang()) + mvInp('Angka ' + MV_JUDUL[j].toLowerCase(), 'angka', d.angka == null ? '' : String(d.angka).replace('.', ','), 'inputmode="decimal" required autocomplete="off" placeholder="Contoh: 87,5"');
+      else if (j === 'unit') h += mvSel('Unit / bidang penanggung jawab', 'bidang', [{ v: '', t: '— Pilih unit —' }].concat((meta.bidang || []).map(function (b) { return { v: b, t: b }; })), '') +
+        mvSel('PIC (opsional)', 'pic', [{ v: '', t: 'Semua PIC di unit ini' }].concat((meta.pic || []).map(function (p) { return { v: p.v, t: p.t + (p.b ? ' (' + p.b + ')' : '') }; })), '');
+      else h += mvSel('Triwulan (opsional)', 'tw', [{ v: '', t: 'Semua triwulan' }].concat(MV_TW), d.tw || '') + mvArea(MV_JUDUL[j], 'teks', d.teks, 'required maxlength="1000" rows="4"');
+    }
+    openModal((edit ? 'Ubah ' : 'Tambah ') + MV_JUDUL[j], '<form id="form-monev" data-jenis="' + esc(j) + '" data-id="' + esc(d.id || '') + '" novalidate>' + h +
+      '<div class="form-actions"><button class="btn btn-primary" type="submit">Simpan</button><button type="button" class="btn btn-ghost" data-act="close-modal">Batal</button></div><p class="form-msg" role="alert"></p></form>');
+  }
+  function submitMonev(f) {
+    var msg = $('.form-msg', f), btn = $('button[type=submit]', f), j = f.getAttribute('data-jenis');
+    var o = { jenis: j, id: f.getAttribute('data-id') || '', tahun: periode().tahun };
+    ['induk', 'teks', 'satuan', 'tw', 'angka', 'bidang', 'pic'].forEach(function (k) { if (f.elements[k]) o[k] = f.elements[k].value.trim(); });
+    msg.className = 'form-msg'; msg.textContent = '';
+    if (j !== 'sasaran' && !o.induk) { msg.textContent = j === 'ik' ? 'Pilih tujuan / sasaran program.' : 'Pilih indikator kinerja (IK).'; return; }
+    if ((j === 'sasaran' || j === 'ik') && o.teks.length < 5) { msg.textContent = 'Isi minimal 5 huruf.'; return; }
+    if ((j === 'catatan' || j === 'keterangan') && o.teks.length < 3) { msg.textContent = 'Isi minimal 3 huruf.'; return; }
+    if ((j === 'target' || j === 'realisasi') && (o.angka === '' || isNaN(Number(angkaId(o.angka))))) { msg.textContent = 'Isi angka yang valid.'; return; }
+    if (j === 'unit' && !o.bidang) { msg.textContent = 'Pilih unit / bidang.'; return; }
+    if (o.angka !== undefined) o.angka = angkaId(o.angka);
+    btn.disabled = true; btn.textContent = 'Menyimpan…';
+    api('apiSimpanMonev', [o]).then(function () { closeModal(); toast('Tersimpan.', 'ok'); reload(); })
+      .catch(function (e) { if (e.handled) return; msg.textContent = e.message; btn.disabled = false; btn.textContent = 'Simpan'; });
+  }
+  function konfirmasiKlik(el, fn) {
+    if (!el.getAttribute('data-yakin')) { el.setAttribute('data-yakin', '1'); el.setAttribute('data-lama', el.textContent); el.textContent = 'Yakin?'; el.classList.add('btn-danger'); return; }
+    fn();
+  }
+  function hapusMonev(el) {
+    konfirmasiKlik(el, function () {
+      el.disabled = true;
+      api('apiHapusMonev', [el.getAttribute('data-id')]).then(function () { toast('Dihapus.', 'ok'); reload(); })
+        .catch(function (e) { if (!e.handled) toast(e.message, 'err'); el.disabled = false; el.removeAttribute('data-yakin'); el.textContent = el.getAttribute('data-lama') || 'Hapus'; el.classList.remove('btn-danger'); });
+    });
+  }
+  function openMonevBukti(d) {
+    var meta = mvMeta();
+    openModal('Unggah Bukti Dukung', '<form id="form-mbukti" novalidate>' +
+      mvSel('Indikator kinerja (IK)', 'ikId', mvIkOpts(meta, true), d.ikId) +
+      '<div class="field"><label for="mb-file">Berkas (PDF, gambar, Word, Excel, PowerPoint, CSV, TXT; maks. 8 MB)</label><input class="input" id="mb-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt" required></div>' +
+      '<div class="form-grid">' + mvSel('Untuk triwulan', 'tw', [{ v: '', t: 'Umum / seluruh tahun' }].concat(MV_TW), twSekarang()) + mvInp('Keterangan (opsional)', 'catatan', '', 'maxlength="300" autocomplete="off"') + '</div>' +
+      '<div class="form-actions"><button class="btn btn-primary" type="submit">Unggah Bukti</button><button type="button" class="btn btn-ghost" data-act="close-modal">Batal</button></div><p class="form-msg" role="alert"></p></form>');
+  }
+  function submitMonevBukti(f) {
+    var msg = $('.form-msg', f), btn = $('button[type=submit]', f), file = $('#mb-file').files[0];
+    msg.className = 'form-msg'; msg.textContent = '';
+    if (!f.elements.ikId.value) { msg.textContent = 'Pilih indikator kinerja (IK).'; return; }
+    if (!file) { msg.textContent = 'Pilih berkas yang akan diunggah.'; return; }
+    if (file.size > 8 * 1048576) { msg.textContent = 'Ukuran berkas ' + ukuranTeks(file.size) + ' melebihi batas 8 MB.'; return; }
+    var label = btn.textContent; btn.disabled = true; btn.textContent = 'Mengunggah…';
+    var fr = new FileReader();
+    fr.onerror = function () { msg.textContent = 'Berkas tidak dapat dibaca.'; btn.disabled = false; btn.textContent = label; };
+    fr.onload = function () {
+      var b64 = String(fr.result).split(',')[1] || '';
+      api('apiUnggahBuktiMonev', [{ ikId: f.elements.ikId.value, tahun: periode().tahun, tw: f.elements.tw.value, nama: file.name, base64: b64, catatan: f.elements.catatan.value }])
+        .then(function () { closeModal(); toast('Bukti diunggah.', 'ok'); reload(); })
+        .catch(function (e) { if (e.handled) return; msg.textContent = e.message; btn.disabled = false; btn.textContent = label; });
+    };
+    fr.readAsDataURL(file);
+  }
+
   /* ---------- logo: unggah gambar dan perkecil di browser ---------- */
   function perkecilLogo(file, selesai, gagal) {
     var fr = new FileReader();
@@ -804,6 +888,20 @@
         break;
       }
       case 'bukti-hapus': hapusBukti(el); break;
+      case 'monev-form': openMonevForm(JSON.parse(el.getAttribute('data-json') || '{}')); break;
+      case 'monev-hapus': hapusMonev(el); break;
+      case 'mbukti-form': openMonevBukti(JSON.parse(el.getAttribute('data-json') || '{}')); break;
+      case 'mbukti-unduh': {
+        var lm = el.textContent; el.disabled = true; el.textContent = 'Menyiapkan…';
+        api('apiUnduhBuktiMonev', [el.getAttribute('data-id')]).then(function (r) { unduhB64(r.nama, r.base64, r.mime); })
+          .catch(function (e) { if (!e.handled) toast(e.message, 'err'); }).then(function () { el.disabled = false; el.textContent = lm; });
+        break;
+      }
+      case 'mbukti-hapus': konfirmasiKlik(el, function () {
+        el.disabled = true;
+        api('apiHapusBuktiMonev', [el.getAttribute('data-id')]).then(function () { toast('Bukti dihapus.', 'ok'); reload(); })
+          .catch(function (e) { if (!e.handled) toast(e.message, 'err'); el.disabled = false; });
+      }); break;
       case 'tarik': tarikData(el); break;
       case 'tk-all': case 'tk-none': { var ft = $('#form-tarik'); $$('input[name=tk-ik]', ft).forEach(function (c) { if (!c.closest('[hidden]')) c.checked = act === 'tk-all'; }); syncTarik(ft); break; }
       case 'logo-pilih': { var lf = $('#logo-file'); if (lf) lf.click(); break; }
@@ -959,6 +1057,8 @@
     if (fid === 'form-program-modal') return submitProgramForm(f);
     if (fid === 'form-target') return submitTarget(f);
     if (fid === 'form-bukti') return submitBukti(f);
+    if (fid === 'form-monev') return submitMonev(f);
+    if (fid === 'form-mbukti') return submitMonevBukti(f);
     if (fid === 'form-tarik') return;
     if (f.getAttribute('data-api')) return submitGeneric(f);
   });

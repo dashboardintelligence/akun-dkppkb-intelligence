@@ -15,7 +15,7 @@ const SESI_DETIK = 21600; // 6 jam (batas maksimum CacheService)
 
 const SHEET = {
   CONFIG: 'Config', BIDANG: 'Bidang', INDIKATOR: 'Indikator', ISIAN: 'Isian',
-  USERS: 'Users', MASALAH: 'Masalah', PERMINTAAN: 'PermintaanData', LOG: 'Log', PROGRAM: 'Program', TARGET: 'Target', BUKTI: 'Bukti'
+  USERS: 'Users', MASALAH: 'Masalah', PERMINTAAN: 'PermintaanData', LOG: 'Log', PROGRAM: 'Program', TARGET: 'Target', BUKTI: 'Bukti', MONEV: 'Monev'
 };
 
 const HEADERS = {
@@ -29,7 +29,8 @@ const HEADERS = {
   Log: ['Waktu', 'Jenis', 'Aktor', 'Deskripsi'],
   Program: ['ID', 'Nama', 'Bidang', 'Sub', 'Aktif'],
   Target: ['IndikatorID', 'Tahun', 'Periode', 'Target', 'DiubahOleh', 'DiubahPada'],
-  Bukti: ['ID', 'IndikatorID', 'Tahun', 'Bulan', 'NamaFile', 'Tipe', 'Ukuran', 'FileId', 'Catatan', 'DiunggahOleh', 'DiunggahPada']
+  Bukti: ['ID', 'IndikatorID', 'Tahun', 'Bulan', 'NamaFile', 'Tipe', 'Ukuran', 'FileId', 'Catatan', 'DiunggahOleh', 'DiunggahPada'],
+  Monev: ['ID', 'Jenis', 'Tahun', 'Induk', 'TW', 'Teks', 'Angka', 'Satuan', 'Bidang', 'PIC', 'DibuatOleh', 'DibuatPada']
 };
 const ENUM_PERIODE_TARGET = ['TW1', 'TW2', 'TW3', 'TW4', 'SM1', 'SM2', 'TH'];
 
@@ -62,7 +63,7 @@ function doGet(e) {
 const API_JSON_ = ['apiMerek', 'doLogin', 'doLogout', 'getPageContent', 'apiBootstrap', 'apiAmbilIsian', 'apiSimpanIsian', 'apiVerifikasi', 'apiKirimPengingat',
   'apiSimpanMasalah', 'apiUbahStatusMasalah', 'apiSimpanPermintaan', 'apiUbahStatusPermintaan', 'apiSimpanConfig', 'apiSimpanIndikator', 'apiSimpanProgram',
   'apiSimpanTarget', 'apiSimpanUser', 'apiResetPassword', 'apiUbahStatusUser', 'apiUbahPassword', 'apiExportPdf', 'apiDaftarBukti', 'apiUnggahBukti',
-  'apiUnduhBukti', 'apiHapusBukti', 'apiTarikData'];
+  'apiUnduhBukti', 'apiHapusBukti', 'apiTarikData', 'apiSimpanMonev', 'apiHapusMonev', 'apiUnggahBuktiMonev', 'apiUnduhBuktiMonev', 'apiHapusBuktiMonev'];
 
 function jsonOut_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj === undefined ? null : obj)).setMimeType(ContentService.MimeType.JSON);
@@ -1237,6 +1238,208 @@ function apiHapusBukti(token, id) {
     bust_(SHEET.BUKTI);
     try { DriveApp.getFileById(String(r.FileId)).setTrashed(true); } catch (e) { /* sudah hilang */ }
     catatLog_('bukti', user.username, 'Hapus bukti ' + r.ID);
+    return true;
+  });
+}
+
+
+/* ---------------- Monev Kinerja ----------------
+ * Satu lembar "Monev" menampung semua sub-menu lewat kolom Jenis:
+ *  sasaran    : Teks = Tujuan / Sasaran Program
+ *  ik         : Induk = ID sasaran, Teks = Indikator Kinerja (IK) Tujuan Program, Satuan
+ *  target     : Induk = ID IK, TW, Angka          (satu nilai per IK + tahun + TW)
+ *  realisasi  : Induk = ID IK, TW, Angka          (satu nilai per IK + tahun + TW)
+ *  unit       : Induk = ID IK, Bidang, PIC        (unit / PIC penanggung jawab IK)
+ *  catatan    : Induk = ID IK, TW (opsional), Teks
+ *  keterangan : Induk = ID IK, TW (opsional), Teks
+ * Bukti dukung disimpan di lembar Bukti dengan IndikatorID "MV:<ID IK>" dan kolom Bulan berisi nomor TW (0 = umum). */
+const MONEV_JENIS = ['sasaran', 'ik', 'target', 'realisasi', 'unit', 'catatan', 'keterangan'];
+const MONEV_TW = ['TW1', 'TW2', 'TW3', 'TW4'];
+const MONEV_SATUAN = ['%', 'Angka', 'Jumlah'];
+const MONEV_AWAL = { sasaran: 'SP', ik: 'IKM' };
+
+function monevIdBaru_(jenis) {
+  const pre = MONEV_AWAL[jenis];
+  if (pre) {
+    let mx = 0;
+    readTable_(SHEET.MONEV).filter(r => r.Jenis === jenis).forEach(r => { const n = Number(String(r.ID).replace(/\D/g, '')); if (n > mx) mx = n; });
+    return pre + '-' + ('00' + (mx + 1)).slice(-3);
+  }
+  return 'MV-' + Utilities.formatDate(new Date(), TZ, 'yyMMddHHmmss') + '-' + Utilities.getUuid().slice(0, 4);
+}
+
+/** Admin boleh semua. PIC boleh mengisi realisasi, catatan, keterangan, dan bukti untuk IK yang unitnya (bidang atau PIC) miliknya. */
+function monevBolehUbah_(user, jenis, ikId) {
+  if (user.role === 'admin') return true;
+  if (user.role !== 'pic') return false;
+  if (['realisasi', 'catatan', 'keterangan', 'bukti'].indexOf(jenis) < 0) return false;
+  return readTable_(SHEET.MONEV).some(r => r.Jenis === 'unit' && String(r.Induk) === String(ikId) && (String(r.PIC) === user.username || (!r.PIC && String(r.Bidang) === String(user.bidang))));
+}
+
+function monevAngka_(v, satuan) {
+  const t = String(v === undefined || v === null ? '' : v).trim().replace(/\s/g, '').replace(',', '.');
+  if (t === '' || isNaN(Number(t))) throw new Error('Isi angka yang valid.');
+  const n = Number(t);
+  if (n < 0) throw new Error('Angka tidak boleh negatif.');
+  if (satuan === '%' && n > 1000) throw new Error('Persen tidak boleh lebih dari 1000.');
+  if (n > 1e12) throw new Error('Angka terlalu besar.');
+  return Math.round(n * 1000) / 1000;
+}
+
+/** Tambah / ubah satu isi sub-menu Monev Kinerja. */
+function apiSimpanMonev(token, p) {
+  return run_(() => {
+    const user = auth_(token, ['admin', 'pic']);
+    p = p || {};
+    const jenis = String(p.jenis || '');
+    if (MONEV_JENIS.indexOf(jenis) < 0) throw new Error('Jenis isian tidak dikenal.');
+    const cfg = getConfig_();
+    const tahun = Number(p.tahun) >= 2000 && Number(p.tahun) <= 2100 ? Number(p.tahun) : cfg.Tahun;
+    const semua = readTable_(SHEET.MONEV);
+    let id = bersih_(p.id, 40);
+    const lama = id ? semua.find(r => String(r.ID) === id && r.Jenis === jenis) : null;
+    if (id && !lama) throw new Error('Data tidak ditemukan.');
+    const baris = { ID: id, Jenis: jenis, Tahun: lama ? lama.Tahun : tahun, Induk: '', TW: '', Teks: '', Angka: '', Satuan: '', Bidang: '', PIC: '', DibuatOleh: lama ? lama.DibuatOleh : user.username, DibuatPada: lama ? lama.DibuatPada : nowStr_() };
+    let ikId = '';
+    if (jenis === 'sasaran') {
+      if (user.role !== 'admin') throw new Error('Hanya admin yang dapat mengelola sasaran program.');
+      baris.Teks = bersih_(p.teks, 300);
+      if (baris.Teks.length < 5) throw new Error('Tujuan / sasaran program terlalu pendek (minimal 5 huruf).');
+    } else {
+      ikId = bersih_(p.induk, 40);
+      if (jenis === 'ik') {
+        if (user.role !== 'admin') throw new Error('Hanya admin yang dapat mengelola indikator kinerja.');
+        if (!semua.some(r => r.Jenis === 'sasaran' && String(r.ID) === ikId)) throw new Error('Pilih tujuan / sasaran program untuk IK ini.');
+        baris.Induk = ikId;
+        baris.Teks = bersih_(p.teks, 300);
+        if (baris.Teks.length < 5) throw new Error('Nama IK terlalu pendek (minimal 5 huruf).');
+        baris.Satuan = MONEV_SATUAN.indexOf(p.satuan) >= 0 ? p.satuan : '%';
+      } else {
+        if (!semua.some(r => r.Jenis === 'ik' && String(r.ID) === ikId)) throw new Error('Pilih indikator kinerja (IK) terlebih dahulu.');
+        if (!monevBolehUbah_(user, jenis, ikId)) throw new Error('Anda tidak berwenang mengubah ' + jenis + ' untuk IK ini.');
+        baris.Induk = ikId;
+        const ik = semua.find(r => r.Jenis === 'ik' && String(r.ID) === ikId);
+        if (jenis === 'target' || jenis === 'realisasi') {
+          if (MONEV_TW.indexOf(p.tw) < 0) throw new Error('Pilih triwulan (TW 1 sampai TW 4).');
+          baris.TW = p.tw;
+          baris.Angka = monevAngka_(p.angka, ik.Satuan);
+          baris.Satuan = ik.Satuan;
+          const dup = semua.find(r => r.Jenis === jenis && String(r.Induk) === ikId && Number(r.Tahun) === Number(baris.Tahun) && r.TW === p.tw);
+          if (dup) { if (!id) { id = String(dup.ID); baris.ID = id; baris.DibuatOleh = dup.DibuatOleh; baris.DibuatPada = dup.DibuatPada; } else if (String(dup.ID) !== id) throw new Error('Nilai ' + p.tw + ' untuk IK ini sudah ada. Ubah dari daftar.'); }
+        } else if (jenis === 'unit') {
+          const bidangValid = readTable_(SHEET.BIDANG).map(b => String(b.Nama));
+          if (bidangValid.indexOf(p.bidang) < 0) throw new Error('Pilih unit / bidang penanggung jawab.');
+          baris.Bidang = p.bidang;
+          const pic = bersih_(p.pic, 60).toLowerCase();
+          if (pic) {
+            const u = readTable_(SHEET.USERS).find(x => String(x.Username).toLowerCase() === pic && x.Role === 'pic' && String(x.Aktif).toLowerCase() !== 'tidak');
+            if (!u) throw new Error('PIC tidak ditemukan atau tidak aktif.');
+            baris.PIC = String(u.Username);
+          }
+          if (semua.some(r => r.Jenis === 'unit' && String(r.Induk) === ikId && String(r.ID) !== id && r.Bidang === baris.Bidang && String(r.PIC || '') === baris.PIC)) throw new Error('Unit / PIC itu sudah tercatat untuk IK ini.');
+        } else { // catatan, keterangan
+          baris.TW = MONEV_TW.indexOf(p.tw) >= 0 ? p.tw : '';
+          baris.Teks = bersih_(p.teks, 1000);
+          if (baris.Teks.length < 3) throw new Error('Isi minimal 3 huruf.');
+          if (lama && user.role !== 'admin' && String(lama.DibuatOleh) !== user.username) throw new Error('Anda hanya dapat mengubah isian yang Anda buat sendiri.');
+        }
+      }
+    }
+    if (!id) { id = monevIdBaru_(jenis); baris.ID = id; }
+    upsertRow_(SHEET.MONEV, o => String(o.ID) === id, baris);
+    catatLog_('monev', user.username, (lama ? 'Mengubah ' : 'Menambah ') + jenis + ' ' + id);
+    return { id: id };
+  });
+}
+
+/** Hapus satu isi Monev. Menghapus sasaran harus mengosongkan IK-nya dulu; menghapus IK ikut menghapus isian dan bukti miliknya. */
+function apiHapusMonev(token, id) {
+  return run_(() => {
+    const user = auth_(token, ['admin', 'pic']);
+    id = bersih_(id, 40);
+    const semua = readTable_(SHEET.MONEV);
+    const r = semua.find(x => String(x.ID) === id);
+    if (!r) throw new Error('Data tidak ditemukan.');
+    if (r.Jenis === 'sasaran') {
+      if (user.role !== 'admin') throw new Error('Hanya admin yang dapat menghapus sasaran program.');
+      if (semua.some(x => x.Jenis === 'ik' && String(x.Induk) === id)) throw new Error('Hapus atau pindahkan dulu IK yang ada di bawah sasaran ini.');
+    } else if (r.Jenis === 'ik') {
+      if (user.role !== 'admin') throw new Error('Hanya admin yang dapat menghapus indikator kinerja.');
+    } else {
+      if (!monevBolehUbah_(user, r.Jenis, r.Induk)) throw new Error('Anda tidak berwenang menghapus data ini.');
+      if ((r.Jenis === 'catatan' || r.Jenis === 'keterangan') && user.role !== 'admin' && String(r.DibuatOleh) !== user.username) throw new Error('Anda hanya dapat menghapus isian yang Anda buat sendiri.');
+    }
+    let hapus = [r];
+    if (r.Jenis === 'ik') {
+      hapus = hapus.concat(semua.filter(x => String(x.Induk) === id && x.Jenis !== 'ik'));
+      const bukti = readTable_(SHEET.BUKTI).filter(b => String(b.IndikatorID) === 'MV:' + id);
+      bukti.sort((a, b) => b._row - a._row).forEach(b => {
+        sheetTulis_(SHEET.BUKTI).deleteRow(b._row);
+        try { DriveApp.getFileById(String(b.FileId)).setTrashed(true); } catch (e) { /* sudah hilang */ }
+      });
+      bust_(SHEET.BUKTI);
+    }
+    hapus.sort((a, b) => b._row - a._row).forEach(x => sheetTulis_(SHEET.MONEV).deleteRow(x._row));
+    bust_(SHEET.MONEV);
+    catatLog_('monev', user.username, 'Hapus ' + r.Jenis + ' ' + id);
+    return { dihapus: hapus.length };
+  });
+}
+
+function monevIk_(id) {
+  return readTable_(SHEET.MONEV).find(r => r.Jenis === 'ik' && String(r.ID) === String(id));
+}
+
+/** Unggah bukti dukung untuk satu IK Monev (opsional per triwulan). */
+function apiUnggahBuktiMonev(token, p) {
+  return run_(() => {
+    const user = auth_(token, ['admin', 'pic']);
+    p = p || {};
+    const ik = monevIk_(p.ikId);
+    if (!ik) throw new Error('Pilih indikator kinerja (IK) terlebih dahulu.');
+    if (!monevBolehUbah_(user, 'bukti', ik.ID)) throw new Error('Anda bukan penanggung jawab IK ini.');
+    const asli = String(p.nama || '').replace(/[\\\/]/g, '_').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 120);
+    const ext = (asli.split('.').length > 1 ? asli.split('.').pop() : '').toLowerCase();
+    if (!ext || !BUKTI_TIPE[ext]) throw new Error('Jenis file tidak didukung. Pakai PDF, gambar (JPG, PNG, WebP), Word, Excel, PowerPoint, CSV, atau TXT.');
+    const b64 = String(p.base64 || '');
+    if (!b64 || b64.length > BUKTI_MAKS_BYTE * 1.4) throw new Error('File kosong atau lebih besar dari ' + (BUKTI_MAKS_BYTE / 1048576) + ' MB.');
+    const bytes = Utilities.base64Decode(b64);
+    if (!bytes.length) throw new Error('File kosong.');
+    if (bytes.length > BUKTI_MAKS_BYTE) throw new Error('File lebih besar dari ' + (BUKTI_MAKS_BYTE / 1048576) + ' MB.');
+    const kunci = 'MV:' + ik.ID;
+    if (readTable_(SHEET.BUKTI).filter(r => String(r.IndikatorID) === kunci).length >= BUKTI_MAKS_PER_IND) throw new Error('Satu IK maksimal ' + BUKTI_MAKS_PER_IND + ' bukti. Hapus yang tidak terpakai.');
+    const tw = MONEV_TW.indexOf(p.tw) >= 0 ? MONEV_TW.indexOf(p.tw) + 1 : 0;
+    const tahun = Number(p.tahun) >= 2000 && Number(p.tahun) <= 2100 ? Number(p.tahun) : getConfig_().Tahun;
+    const id = 'BK-' + Utilities.formatDate(new Date(), TZ, 'yyMMddHHmmss') + '-' + Utilities.getUuid().slice(0, 4);
+    const file = folderBukti_().createFile(Utilities.newBlob(bytes, BUKTI_TIPE[ext], 'MONEV_' + ik.ID + '_' + id + '_' + asli));
+    appendObj_(SHEET.BUKTI, { ID: id, IndikatorID: kunci, Tahun: tahun, Bulan: tw, NamaFile: asli, Tipe: ext, Ukuran: bytes.length, FileId: file.getId(), Catatan: bersih_(p.catatan, 300), DiunggahOleh: user.username, DiunggahPada: nowStr_() });
+    catatLog_('bukti', user.username, 'Unggah bukti Monev ' + id + ' untuk ' + ik.ID);
+    return { id: id };
+  });
+}
+
+function apiUnduhBuktiMonev(token, id) {
+  return run_(() => {
+    auth_(token);
+    const r = readTable_(SHEET.BUKTI).find(x => String(x.ID) === String(id) && String(x.IndikatorID).indexOf('MV:') === 0);
+    if (!r) throw new Error('Bukti tidak ditemukan.');
+    let blob;
+    try { blob = DriveApp.getFileById(String(r.FileId)).getBlob(); } catch (e) { throw new Error('File bukti tidak ditemukan di Google Drive. Mungkin sudah dihapus dari folder.'); }
+    return { nama: String(r.NamaFile), mime: BUKTI_TIPE[String(r.Tipe)] || 'application/octet-stream', base64: Utilities.base64Encode(blob.getBytes()) };
+  });
+}
+
+function apiHapusBuktiMonev(token, id) {
+  return run_(() => {
+    const user = auth_(token, ['admin', 'pic']);
+    const r = readTable_(SHEET.BUKTI).find(x => String(x.ID) === String(id) && String(x.IndikatorID).indexOf('MV:') === 0);
+    if (!r) throw new Error('Bukti tidak ditemukan.');
+    const boleh = user.role === 'admin' || (monevBolehUbah_(user, 'bukti', String(r.IndikatorID).slice(3)) && String(r.DiunggahOleh) === String(user.username));
+    if (!boleh) throw new Error('Anda hanya dapat menghapus bukti yang Anda unggah sendiri.');
+    sheetTulis_(SHEET.BUKTI).deleteRow(r._row);
+    bust_(SHEET.BUKTI);
+    try { DriveApp.getFileById(String(r.FileId)).setTrashed(true); } catch (e) { /* sudah hilang */ }
+    catatLog_('bukti', user.username, 'Hapus bukti Monev ' + r.ID);
     return true;
   });
 }
