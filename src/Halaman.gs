@@ -707,29 +707,47 @@ function pageInputData_(m, user, params, ctx) {
 
 /* ---------------- Halaman: Permintaan Data ---------------- */
 
-/** Baris lampiran pada satu permintaan data (bila ada): nama berkas + Pratinjau + Unduh. */
-function lampiranPmt_(x) {
-  if (!x.Lampiran) return '';
-  let l; try { l = JSON.parse(String(x.Lampiran)); } catch (e) { return ''; }
-  const lihat = ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'txt', 'csv'].indexOf(String(l.tipe).toLowerCase()) >= 0;
-  return '<div class="chips-row">' + chip_('info', 'Lampiran: ' + l.nama) + ' ' +
-    (lihat ? '<button type="button" class="btn btn-ghost btn-sm" data-act="pmt-lihat" data-id="' + esc_(x.ID) + '">Pratinjau</button>' : '') +
-    '<button type="button" class="btn btn-ghost btn-sm" data-act="pmt-unduh" data-id="' + esc_(x.ID) + '">Unduh</button></div>';
+const PMT_ST_ = { Baru: 'warn', Diproses: 'info', Selesai: 'ok', Ditolak: 'crit' };
+
+/** Daftar formulir permintaan data: bisa difilter menurut status, dibuka (detail) dan ditinjau (admin). */
+function daftarFormPmt_(list, user) {
+  const adm = user.role === 'admin';
+  const hit = {}; ['Baru', 'Diproses', 'Selesai', 'Ditolak'].forEach(k => { hit[k] = list.filter(x => x.Status === k).length; });
+  let h = '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">' + (adm ? 'Daftar Formulir Masuk' : 'Permintaan Saya') + '</h2>' +
+    '<p class="muted sm">' + (adm ? 'Permintaan dari halaman awal (publik) dan dari akun internal. Klik “Buka” untuk melihat isi lengkap dan meninjaunya.' : 'Permintaan yang pernah Anda ajukan beserta statusnya.') + '</p></div>' + chip_('info', list.length + ' formulir') + '</div>';
+  if (!list.length) return h + kosong_('Belum ada permintaan.', 'inbox') + '</section>';
+  h += '<div class="view-toggle pmt-filter" role="group" aria-label="Saring status">' +
+    [['', 'Semua', list.length], ['Baru', 'Baru', hit.Baru], ['Diproses', 'Diproses', hit.Diproses], ['Selesai', 'Selesai', hit.Selesai], ['Ditolak', 'Ditolak', hit.Ditolak]].map((t, n) =>
+      '<button type="button" class="vt-btn' + (n === 0 ? ' is-on' : '') + '" data-act="pmt-filter" data-v="' + t[0] + '">' + t[1] + ' · ' + t[2] + '</button>').join('') + '</div>';
+  h += '<div class="stack pmt-list">' + list.map(x => {
+    let kontak = String(x.Kontak || ''), cat = String(x.Catatan || '');
+    const lm = cat.match(/^Kontak: (.*?) · via halaman awal$/);   // data lama: kontak tersimpan di Catatan
+    if (!kontak && lm) { kontak = lm[1]; cat = ''; }
+    let lamp = null; try { lamp = x.Lampiran ? JSON.parse(String(x.Lampiran)) : null; } catch (e) { lamp = null; }
+    const sumber = x.Sumber || (lm ? 'Publik' : 'Internal');
+    const d = { id: String(x.ID), tgl: tglId_(x.Tanggal), pemohon: String(x.Pemohon), instansi: String(x.Instansi), kontak: kontak, keb: String(x.Kebutuhan), format: String(x.Format),
+      tenggat: x.Tenggat ? tglId_(x.Tenggat) : '', status: String(x.Status), catatan: cat, sumber: sumber, tinjau: x.DitinjauOleh ? String(x.DitinjauOleh) + ' · ' + tglId_(x.DitinjauPada) : '',
+      lampiran: lamp ? { nama: String(lamp.nama), tipe: String(lamp.tipe) } : null };
+    const ringkas = String(x.Kebutuhan).length > 140 ? String(x.Kebutuhan).slice(0, 139).trim() + '…' : String(x.Kebutuhan);
+    return '<div class="tung pmt-row" data-st="' + esc_(x.Status) + '"><div class="tung-main"><b>' + esc_(ringkas) + '</b>' +
+      '<span class="muted sm">' + esc_(x.ID) + ' · ' + esc_(x.Pemohon) + ' (' + esc_(x.Instansi) + ') · ' + esc_(tglId_(x.Tanggal)) + '</span>' +
+      '<div class="chips-row">' + chip_(sumber === 'Publik' ? 'warn' : 'mute', sumber === 'Publik' ? 'Dari publik' : 'Internal') + (lamp ? ' ' + chip_('info', 'Ada lampiran') : '') + '</div></div>' +
+      '<div class="tung-end">' + chip_(PMT_ST_[x.Status] || 'mute', x.Status) +
+      '<button type="button" class="btn btn-primary btn-sm" data-act="pmt-buka" data-json="' + esc_(JSON.stringify(d)) + '">Buka' + ic_('chevron_right') + '</button></div></div>';
+  }).join('') + '</div></section>';
+  return h;
 }
 
 function pagePermintaan_(m, user) {
   const all = readTable_(SHEET.PERMINTAAN).sort((a, b) => String(b.Tanggal).localeCompare(String(a.Tanggal)));
   const list = user.role === 'admin' ? all : all.filter(x => x.Pemohon === user.nama);
   let h = pageHead_('Permintaan Data', 'Ajukan kebutuhan data untuk perencanaan, laporan, atau koordinasi lintas instansi.', '');
-  h += '<section class="card card-pad"><h2 class="h2 flat">Ajukan Permintaan</h2><form id="form-permintaan" data-api="apiSimpanPermintaan" novalidate><div class="form-grid">' +
+  const frm = '<section class="card card-pad"><h2 class="h2 flat">Ajukan Permintaan</h2><form id="form-permintaan" data-api="apiSimpanPermintaan" novalidate><div class="form-grid">' +
     field_('Instansi / unit pemohon', 'instansi', 'text', user.bidang || '', 'maxlength="100"') + select_('Format yang diinginkan', 'format', ['Excel', 'PDF', 'Dasbor', 'Lainnya'], 'Excel') + field_('Dibutuhkan paling lambat (opsional)', 'tenggat', 'date', '') + '</div>' +
     field_('Data yang dibutuhkan', 'kebutuhan', 'textarea', '', 'required maxlength="1000" rows="3" placeholder="Contoh: capaian imunisasi dasar lengkap per kabupaten semester I"') +
     '<div class="form-actions"><button class="btn btn-alert" type="submit">Kirim Permintaan</button></div><p class="form-msg" role="alert"></p></form></section>';
-  h += '<section class="card card-pad"><div class="sec-top"><h2 class="h2 flat">' + (user.role === 'admin' ? 'Semua Permintaan' : 'Permintaan Saya') + '</h2>' + chip_('info', list.length + ' permintaan') + '</div>';
-  h += list.length ? '<div class="stack">' + list.map(x => '<div class="tung"><div class="tung-main"><b>' + esc_(x.Kebutuhan) + '</b><span class="muted sm">' + esc_(x.ID) + ' · ' + esc_(x.Pemohon) + ' (' + esc_(x.Instansi) + ') · ' + esc_(tglId_(x.Tanggal)) + ' · ' + esc_(x.Format) + (x.Tenggat ? ' · paling lambat ' + esc_(tglId_(x.Tenggat)) : '') + '</span>' + (x.Catatan ? '<span class="muted sm">Catatan: ' + esc_(x.Catatan) + '</span>' : '') + lampiranPmt_(x) + '</div>' +
-    '<div class="tung-end">' + chip_({ Baru: 'warn', Diproses: 'info', Selesai: 'ok', Ditolak: 'crit' }[x.Status] || 'mute', x.Status) +
-    (user.role === 'admin' ? ['Diproses', 'Selesai', 'Ditolak'].filter(s => s !== x.Status).map(s => '<button type="button" class="btn btn-ghost btn-sm" data-act="permintaan-status" data-id="' + esc_(x.ID) + '" data-status="' + s + '">' + s + '</button>').join('') : '') + '</div></div>').join('') + '</div>' : kosong_('Belum ada permintaan.', 'inbox');
-  return h + '</section>';
+  const dft = daftarFormPmt_(list, user);
+  return h + (user.role === 'admin' ? dft + frm : frm + dft);
 }
 
 /* ---------------- Halaman: Pengaturan ---------------- */

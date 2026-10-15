@@ -600,6 +600,33 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
   }
   var PRATINJAU_ = { pdf: 1, jpg: 1, jpeg: 1, png: 1, webp: 1, txt: 1, csv: 1 };
+  /* ---------- permintaan data: buka & tinjau ---------- */
+  function openPmt(d) {
+    var adm = AppState.user && AppState.user.role === 'admin';
+    var ST = ['Baru', 'Diproses', 'Selesai', 'Ditolak'], CLS = { Baru: 'warn', Diproses: 'info', Selesai: 'ok', Ditolak: 'crit' };
+    function row(k, v) { return '<div class="pmt-r"><dt>' + k + '</dt><dd>' + (v ? esc(v) : '<span class="muted">—</span>') + '</dd></div>'; }
+    var lam = d.lampiran ? '<div class="pmt-r"><dt>Lampiran</dt><dd><span class="chip chip-info">' + esc(d.lampiran.nama) + '</span> ' +
+      (bisaPratinjau(d.lampiran.tipe) ? '<button type="button" class="btn btn-ghost btn-sm" data-act="pmt-lihat" data-id="' + esc(d.id) + '">Pratinjau</button>' : '') +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="pmt-unduh" data-id="' + esc(d.id) + '">Unduh</button></dd></div>' : row('Lampiran', '');
+    var h = '<div class="pmt-head"><span class="chip chip-' + (CLS[d.status] || 'mute') + '">' + esc(d.status) + '</span> <span class="chip chip-' + (d.sumber === 'Publik' ? 'warn' : 'mute') + '">' + (d.sumber === 'Publik' ? 'Dari publik' : 'Internal') + '</span></div>' +
+      '<dl class="pmt-dl">' + row('Nomor', d.id) + row('Diajukan', d.tgl) + row('Pemohon', d.pemohon) + row('Instansi / asal', d.instansi) + row('Kontak', d.kontak) +
+      row('Format', d.format) + row('Dibutuhkan paling lambat', d.tenggat) + '<div class="pmt-r pmt-wide"><dt>Data yang diminta</dt><dd class="pmt-keb">' + esc(d.keb) + '</dd></div>' + lam +
+      (d.tinjau ? row('Ditinjau oleh', d.tinjau) : '') + (!adm && d.catatan ? row('Catatan admin', d.catatan) : '') + '</dl>';
+    if (adm) h += '<form id="form-pmt-review" novalidate><input type="hidden" name="id" value="' + esc(d.id) + '"><h3 class="h3 sub-h">Tinjauan admin</h3>' +
+      '<div class="field"><label for="pr-st">Status</label><select class="input" id="pr-st" name="status">' + ST.map(function (s) { return '<option' + (s === d.status ? ' selected' : '') + '>' + s + '</option>'; }).join('') + '</select></div>' +
+      '<div class="field"><label for="pr-cat">Catatan tinjauan (opsional)</label><textarea class="input input-area" id="pr-cat" name="catatan" maxlength="300" rows="3" placeholder="Contoh: data sudah dikirim lewat email pada 20 Oktober">' + esc(d.catatan || '') + '</textarea></div>' +
+      '<p class="form-msg" role="alert"></p><div class="form-actions"><button class="btn btn-primary" type="submit">Simpan Tinjauan</button><button type="button" class="btn btn-ghost" data-act="close-modal">Tutup</button></div></form>';
+    else h += '<div class="form-actions"><button type="button" class="btn btn-ghost" data-act="close-modal">Tutup</button></div>';
+    openModal('Permintaan Data', h, true);
+  }
+  function submitPmtReview(f) {
+    var msg = $('.form-msg', f), btn = $('button[type=submit]', f), lb = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Menyimpan…'; msg.textContent = '';
+    api('apiUbahStatusPermintaan', [f.elements.id.value, f.elements.status.value, f.elements.catatan.value])
+      .then(function () { closeModal(); toast('Tinjauan disimpan.', 'ok'); reload(); })
+      .catch(function (e) { if (e.handled) return; msg.textContent = e.message; btn.disabled = false; btn.textContent = lb; });
+  }
+
   function bisaPratinjau(t) { return !!PRATINJAU_[String(t || '').toLowerCase()]; }
   var pratinjauUrl = null;
   function pratinjauB64(r) {
@@ -967,6 +994,13 @@
           .catch(function (e) { if (!e.handled) toast(e.message, 'err'); }).then(function () { el.disabled = false; el.textContent = ll; });
         break;
       }
+      case 'pmt-filter': {
+        var pf = el.closest('.card'), fv = el.getAttribute('data-v');
+        pf.querySelectorAll('.pmt-filter .vt-btn').forEach(function (b) { b.classList.toggle('is-on', b === el); });
+        pf.querySelectorAll('.pmt-row').forEach(function (r) { r.hidden = !!fv && r.getAttribute('data-st') !== fv; });
+        break;
+      }
+      case 'pmt-buka': { var pd = {}; try { pd = JSON.parse(el.getAttribute('data-json') || '{}'); } catch (e) { } openPmt(pd); break; }
       case 'pmt-lihat': {
         var lp = el.textContent; el.disabled = true; el.textContent = 'Membuka…';
         api('apiUnduhLampiranPermintaan', [el.getAttribute('data-id')]).then(pratinjauB64)
@@ -1150,6 +1184,7 @@
     var f = ev.target, fid = f.getAttribute('id');
     if (fid === 'form-login') return doLoginSubmit(ev);
     if (fid === 'form-minta') return submitMinta(ev);
+    if (fid === 'form-pmt-review') return submitPmtReview(f);
     if (fid === 'form-isian') return submitIsian(f);
     if (fid === 'form-remind') return submitRemind(f);
     if (fid === 'form-user-modal') return submitUserForm(f);

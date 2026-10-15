@@ -25,7 +25,7 @@ const HEADERS = {
   Isian: ['IndikatorID', 'Tahun', 'Bulan', 'Realisasi', 'Status', 'KabTertunda', 'Catatan', 'DiisiOleh', 'DiisiPada', 'Analisis', 'Rekomendasi'],
   Users: ['Username', 'Nama', 'Role', 'Bidang', 'Email', 'Telepon', 'Salt', 'Hash', 'Aktif', 'Program', 'Indikator'],
   Masalah: ['ID', 'Tanggal', 'IndikatorID', 'Bidang', 'Permasalahan', 'Rekomendasi', 'Prioritas', 'Status', 'Penanggung', 'Tenggat', 'DibuatOleh'],
-  PermintaanData: ['ID', 'Tanggal', 'Pemohon', 'Instansi', 'Kebutuhan', 'Format', 'Tenggat', 'Status', 'Catatan', 'Lampiran'],
+  PermintaanData: ['ID', 'Tanggal', 'Pemohon', 'Instansi', 'Kebutuhan', 'Format', 'Tenggat', 'Status', 'Catatan', 'Lampiran', 'Kontak', 'Sumber', 'DitinjauOleh', 'DitinjauPada'],
   Log: ['Waktu', 'Jenis', 'Aktor', 'Deskripsi'],
   Program: ['ID', 'Nama', 'Bidang', 'Sub', 'Aktif'],
   Target: ['IndikatorID', 'Tahun', 'Periode', 'Target', 'DiubahOleh', 'DiubahPada'],
@@ -422,7 +422,7 @@ function apiAjukanDataPublik(p) {
     }
     appendObj_(SHEET.PERMINTAAN, {
       ID: id, Tanggal: nowStr_(), Pemohon: nama, Instansi: instansi, Kebutuhan: keb, Format: format, Tenggat: tg,
-      Status: 'Baru', Catatan: 'Kontak: ' + kontak + ' · via halaman awal', Lampiran: lampiran
+      Status: 'Baru', Catatan: '', Lampiran: lampiran, Kontak: kontak, Sumber: 'Publik'
     });
     catatLog_('permintaan', 'publik', 'Permintaan data publik ' + id + ' dari ' + nama);
     return { id: id };
@@ -871,7 +871,7 @@ function apiSimpanPermintaan(token, p) {
     const id = 'PD-' + Utilities.formatDate(new Date(), TZ, 'yyMMddHHmmss');
     appendObj_(SHEET.PERMINTAAN, {
       ID: id, Tanggal: nowStr_(), Pemohon: user.nama, Instansi: bersih_(p.instansi || user.bidang, 100),
-      Kebutuhan: keb, Format: format, Tenggat: bersih_(p.tenggat, 10), Status: 'Baru', Catatan: ''
+      Kebutuhan: keb, Format: format, Tenggat: bersih_(p.tenggat, 10), Status: 'Baru', Catatan: '', Kontak: bersih_(user.email, 120), Sumber: 'Internal'
     });
     catatLog_('permintaan', user.username, 'Permintaan data ' + id);
     return { id: id };
@@ -882,7 +882,7 @@ function apiUbahStatusPermintaan(token, id, status, catatan) {
   return run_(() => {
     const user = auth_(token, ['admin']);
     if (['Baru', 'Diproses', 'Selesai', 'Ditolak'].indexOf(status) < 0) throw new Error('Status tidak valid.');
-    const hasil = upsertRow_(SHEET.PERMINTAAN, o => o.ID === id, { Status: status, Catatan: bersih_(catatan, 300) });
+    const hasil = upsertRow_(SHEET.PERMINTAAN, o => o.ID === id, { Status: status, Catatan: bersih_(catatan, 300), DitinjauOleh: user.nama, DitinjauPada: nowStr_() });
     if (hasil === 'insert') throw new Error('Permintaan tidak ditemukan.');
     catatLog_('permintaan', user.username, id + ' → ' + status);
     return true;
