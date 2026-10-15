@@ -554,6 +554,25 @@
     var a = document.createElement('a'); a.href = url; a.download = nama; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
   }
+  var PRATINJAU_ = { pdf: 1, jpg: 1, jpeg: 1, png: 1, webp: 1, txt: 1, csv: 1 };
+  function bisaPratinjau(t) { return !!PRATINJAU_[String(t || '').toLowerCase()]; }
+  var pratinjauUrl = null;
+  function pratinjauB64(r) {
+    var bin = atob(r.base64), arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    var mime = r.mime || 'application/octet-stream', isi;
+    if (pratinjauUrl) { try { URL.revokeObjectURL(pratinjauUrl); } catch (e) { } pratinjauUrl = null; }
+    if (/^text\//.test(mime)) {
+      var teks = ''; try { teks = new TextDecoder('utf-8').decode(arr); } catch (e) { teks = bin; }
+      if (teks.length > 60000) teks = teks.slice(0, 60000) + '\n… (dipotong, unduh untuk membaca selengkapnya)';
+      isi = '<pre class="pv-teks">' + esc(teks) + '</pre>';
+    } else {
+      pratinjauUrl = URL.createObjectURL(new Blob([arr], { type: mime }));
+      isi = /^image\//.test(mime) ? '<div class="pv-img"><img src="' + pratinjauUrl + '" alt="' + esc(r.nama) + '"></div>'
+        : '<iframe class="pv-frame" src="' + pratinjauUrl + '" title="' + esc(r.nama) + '"></iframe><p class="muted sm">Pratinjau tidak tampil? <a href="' + pratinjauUrl + '" target="_blank" rel="noopener">Buka di tab baru</a> atau gunakan tombol Unduh.</p>';
+    }
+    openModal('Pratinjau: ' + r.nama, isi + '<div class="form-actions"><button type="button" class="btn btn-ghost" data-act="close-modal">Tutup</button></div>', true);
+  }
   function ukuranTeks(b) { return b >= 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB'; }
 
   /* ---------- tarik data (pilih bidang / indikator) ---------- */
@@ -595,7 +614,7 @@
       var h = r.daftar.length ? '<ul class="bk-list">' + r.daftar.map(function (b) {
         return '<li class="bk-item"><span class="bk-ext">' + esc(b.tipe) + '</span><div class="bk-main"><b>' + esc(b.nama) + '</b><span class="muted sm">' +
           (b.bulan ? BULAN_NAMA[b.bulan - 1] + ' ' + b.tahun : 'Umum ' + (b.tahun || '')) + ' · ' + ukuranTeks(b.ukuran) + ' · ' + esc(b.oleh) + ' · ' + esc(b.pada) + '</span>' + (b.catatan ? '<span class="sm">' + esc(b.catatan) + '</span>' : '') + '</div>' +
-          '<div class="bk-act"><button type="button" class="btn btn-ghost btn-sm" data-act="bukti-unduh" data-id="' + esc(b.id) + '">Unduh</button>' +
+          '<div class="bk-act">' + (bisaPratinjau(b.tipe) ? '<button type="button" class="btn btn-ghost btn-sm" data-act="bukti-lihat" data-id="' + esc(b.id) + '">Pratinjau</button>' : '') + '<button type="button" class="btn btn-ghost btn-sm" data-act="bukti-unduh" data-id="' + esc(b.id) + '">Unduh</button>' +
           (b.bisaHapus ? '<button type="button" class="btn btn-ghost btn-sm" data-act="bukti-hapus" data-id="' + esc(b.id) + '" data-ind="' + esc(id) + '">Hapus</button>' : '') + '</div></li>';
       }).join('') + '</ul>' : '<p class="muted">Belum ada dokumen bukti untuk indikator ini.</p>';
       if (r.bisaUnggah) {
@@ -886,6 +905,18 @@
         var lb = el.textContent; el.disabled = true; el.textContent = 'Menyiapkan…';
         api('apiUnduhBukti', [el.getAttribute('data-id')]).then(function (r) { unduhB64(r.nama, r.base64, r.mime); })
           .catch(function (e) { if (!e.handled) toast(e.message, 'err'); }).then(function () { el.disabled = false; el.textContent = lb; });
+        break;
+      }
+      case 'bukti-lihat': {
+        var ll = el.textContent; el.disabled = true; el.textContent = 'Membuka…';
+        api('apiUnduhBukti', [el.getAttribute('data-id')]).then(pratinjauB64)
+          .catch(function (e) { if (!e.handled) toast(e.message, 'err'); }).then(function () { el.disabled = false; el.textContent = ll; });
+        break;
+      }
+      case 'mbukti-lihat': {
+        var lv = el.textContent; el.disabled = true; el.textContent = 'Membuka…';
+        api('apiUnduhBuktiMonev', [el.getAttribute('data-id')]).then(pratinjauB64)
+          .catch(function (e) { if (!e.handled) toast(e.message, 'err'); }).then(function () { el.disabled = false; el.textContent = lv; });
         break;
       }
       case 'bukti-hapus': hapusBukti(el); break;

@@ -1135,7 +1135,7 @@ function viewMonevBukti_(mm, user) {
       (li.length ? '<ul class="bk-list">' + li.map(b => {
         const hapusOk = adm || (boleh && String(b.DiunggahOleh) === user.username);
         return '<li class="bk-item"><span class="bk-ext">' + esc_(b.Tipe) + '</span><div class="bk-main"><b>' + esc_(b.NamaFile) + '</b><span class="muted sm">' + (Number(b.Bulan) ? 'TW ' + Number(b.Bulan) : 'Umum') + ' · ' + esc_(b.DiunggahOleh) + ' · ' + esc_(b.DiunggahPada) + '</span>' + (b.Catatan ? '<span class="sm">' + esc_(b.Catatan) + '</span>' : '') + '</div>' +
-          '<div class="bk-act"><button type="button" class="btn btn-ghost btn-sm" data-act="mbukti-unduh" data-id="' + esc_(b.ID) + '">Unduh</button>' + (hapusOk ? '<button type="button" class="btn btn-ghost btn-sm" data-act="mbukti-hapus" data-id="' + esc_(b.ID) + '">Hapus</button>' : '') + '</div></li>';
+          '<div class="bk-act">' + (['pdf', 'jpg', 'jpeg', 'png', 'webp', 'txt', 'csv'].indexOf(String(b.Tipe).toLowerCase()) >= 0 ? '<button type="button" class="btn btn-ghost btn-sm" data-act="mbukti-lihat" data-id="' + esc_(b.ID) + '">Pratinjau</button>' : '') + '<button type="button" class="btn btn-ghost btn-sm" data-act="mbukti-unduh" data-id="' + esc_(b.ID) + '">Unduh</button>' + (hapusOk ? '<button type="button" class="btn btn-ghost btn-sm" data-act="mbukti-hapus" data-id="' + esc_(b.ID) + '">Hapus</button>' : '') + '</div></li>';
       }).join('') + '</ul>' : '') + '</div>' +
       '<div class="tung-end">' + (boleh ? '<button type="button" class="btn btn-ghost btn-sm" data-act="mbukti-form" data-json="' + esc_(JSON.stringify({ ikId: i.id })) + '">' + ic_('upload_file') + 'Unggah</button>' : '') + '</div></div>';
   }).join('') + '</div></section>';
