@@ -1055,6 +1055,110 @@ function monevMeta_(mm, user) {
   })) + '"></div>';
 }
 
+/* ---------------- Grafik capaian Monev (SVG server-side) ---------------- */
+const GX_WARNA_ = ['#0284c7', '#0d9488', '#6d5bd0', '#d97706', '#db2777', '#65a30d', '#475569', '#0891b2'];
+const GX_TIER_ = function (c) { return c === null ? 'mute' : c >= 100 ? 'ok' : c >= 80 ? 'warn' : 'crit'; };
+const GX_FILL_ = { ok: '#15803d', warn: '#b45309', crit: '#b91c1c', mute: '#64748b' };
+
+function gxRata_(arr) {
+  const v = arr.filter(x => x !== null && x !== undefined);
+  return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length * 10) / 10 : null;
+}
+/** Capaian per triwulan (4 nilai) dari daftar IK: rata-rata realisasi÷target tiap IK. */
+function gxCapTW_(mm, daftarIk) {
+  return [1, 2, 3, 4].map(k => gxRata_(daftarIk.map(i => {
+    const a = mm.angka.realisasi[i.id + '|TW' + k], t = mm.angka.target[i.id + '|TW' + k];
+    return a && t ? hitungCap_(a.v, t.v, 'Naik') : null;
+  })));
+}
+function gxTerakhir_(c) { for (let i = 3; i >= 0; i--) if (c[i] !== null) return i; return -1; }
+
+/** Grafik batang berkelompok. tw = -1 semua triwulan, 0..3 satu triwulan. */
+function gxBatang_(seri, tw, judul) {
+  const W = 760, H = 300, L = 40, B = 34, T = 22, pw = W - L - 10, ph = H - B - T, max = 120;
+  const idx = tw < 0 ? [0, 1, 2, 3] : [tw], gw = pw / idx.length, n = seri.length || 1;
+  const bw = Math.min(46, Math.max(14, gw * 0.7 / n - 4));
+  let s = '<svg class="gx-svg" viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="' + esc_(judul) + '">';
+  [0, 20, 40, 60, 80, 100, 120].forEach(v => {
+    const y = T + ph - ph * v / max;
+    s += '<line class="gx-gr" x1="' + L + '" x2="' + (W - 10) + '" y1="' + y + '" y2="' + y + '"' + (v ? ' stroke-dasharray="3 4"' : '') + '/><text class="gx-tx" x="' + (L - 7) + '" y="' + (y + 4) + '" text-anchor="end" font-size="10.5">' + v + '%</text>';
+  });
+  idx.forEach((i, gi) => {
+    const x0 = L + gw * gi + (gw - n * (bw + 4) + 4) / 2;
+    seri.forEach((k, j) => {
+      const x = x0 + j * (bw + 4), c = k.c[i];
+      if (c !== null) {
+        const h = ph * Math.min(c, max) / max, y = T + ph - h;
+        s += '<rect x="' + x + '" y="' + y + '" width="' + bw + '" height="' + h + '" rx="4" fill="' + k.warna + '"><title>' + esc_(k.nama + ' · TW ' + (i + 1) + ': ' + num_(c, 1) + '%') + '</title></rect>' +
+          '<text class="gx-tx gx-val" x="' + (x + bw / 2) + '" y="' + (y - 5) + '" text-anchor="middle" font-size="10.5" font-weight="700">' + num_(c, 1) + '</text>';
+      } else s += '<text class="gx-tx" x="' + (x + bw / 2) + '" y="' + (T + ph - 6) + '" text-anchor="middle" font-size="12">–</text>';
+    });
+    s += '<text class="gx-tx gx-tw" x="' + (L + gw * gi + gw / 2) + '" y="' + (H - 10) + '" text-anchor="middle" font-size="12.5" font-weight="600">TW ' + (i + 1) + '</text>';
+  });
+  const y100 = T + ph - ph * 100 / max;
+  s += '<line class="gx-100" x1="' + L + '" x2="' + (W - 10) + '" y1="' + y100 + '" y2="' + y100 + '" stroke-width="1.6" stroke-dasharray="6 4"/><text class="gx-tx gx-100t" x="' + (W - 12) + '" y="' + (y100 - 6) + '" text-anchor="end" font-size="11" font-weight="700">Target 100%</text>';
+  return s + '</svg>';
+}
+
+/** Panel grafik lengkap: tombol TW + legenda + 5 varian SVG (diganti lewat data-act="gx-tw"). */
+function gxPanel_(seri, judul, sub) {
+  const tomb = [['-1', 'Semua TW'], ['0', 'TW 1'], ['1', 'TW 2'], ['2', 'TW 3'], ['3', 'TW 4']];
+  let h = '<section class="card card-pad gx-panel"><div class="gx-top"><div><h2 class="h2 flat">' + esc_(judul) + '</h2><p class="muted sm">' + esc_(sub) + '</p></div>' +
+    '<div class="view-toggle" role="group" aria-label="Pilih triwulan">' + tomb.map((t, n) => '<button type="button" class="vt-btn' + (n === 0 ? ' is-on' : '') + '" data-act="gx-tw" data-v="' + t[0] + '">' + t[1] + '</button>').join('') + '</div></div>' +
+    '<div class="gx-leg">' + seri.map(k => '<span title="' + esc_(k.nama) + '"><i class="gx-sw" style="background:' + k.warna + '"></i>' + esc_(k.pendek) + '</span>').join('') + '</div>';
+  tomb.forEach((t, n) => { h += '<div class="gx-var" data-gx="' + t[0] + '"' + (n === 0 ? '' : ' hidden') + '>' + gxBatang_(seri, Number(t[0]), judul) + '</div>'; });
+  return h + '</section>';
+}
+
+function gxPosisi_(seri) {
+  const rowH = 62, W = 420, xs = 270, H = seri.length * rowH + 30, x100 = 4 + xs * (100 / 120);
+  let s = '<svg class="gx-svg" viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Capaian terakhir">';
+  seri.forEach((k, i) => {
+    const li = gxTerakhir_(k.c), c = li < 0 ? null : k.c[li], t = GX_TIER_(c), y = 14 + i * rowH;
+    s += '<text class="gx-tx gx-lbl" x="4" y="' + y + '" font-size="12" font-weight="600">' + esc_(k.pendek) + '</text><rect class="gx-trk" x="4" y="' + (y + 9) + '" width="' + xs + '" height="16" rx="8"/>';
+    if (c !== null) s += '<rect x="4" y="' + (y + 9) + '" width="' + (xs * Math.min(c, 120) / 120) + '" height="16" rx="8" fill="' + GX_FILL_[t] + '"/>' +
+      '<text x="' + (xs + 16) + '" y="' + (y + 22) + '" font-size="15" font-weight="700" fill="' + GX_FILL_[t] + '">' + num_(c, 1) + '%</text><text class="gx-tx" x="' + (xs + 16) + '" y="' + (y + 37) + '" font-size="10.5">TW ' + (li + 1) + ' · ' + (t === 'ok' ? 'Tercapai' : t === 'warn' ? 'Waspada' : 'Kritis') + '</text>';
+    else s += '<text class="gx-tx" x="' + (xs + 16) + '" y="' + (y + 22) + '" font-size="12">Belum diisi</text>';
+  });
+  s += '<line class="gx-100" x1="' + x100 + '" x2="' + x100 + '" y1="4" y2="' + (H - 22) + '" stroke-dasharray="3 3"/><text class="gx-tx gx-100t" x="' + x100 + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10.5" font-weight="600">100% = target</text>';
+  return s + '</svg>';
+}
+function gxKpi_(t, v, s, tier) {
+  return '<div class="card card-pad gx-k"><div class="muted sm">' + esc_(t) + '</div><div class="gx-kv" style="color:' + (tier ? GX_FILL_[tier] : '#0369a1') + '">' + esc_(v) + '</div><div class="muted sm">' + esc_(s) + '</div></div>';
+}
+function gxPills_(c) {
+  return '<div class="gx-pills">' + c.map((x, i) => { const t = GX_TIER_(x); return '<span class="gx-pill gx-p-' + t + '">TW ' + (i + 1) + ' · ' + (x === null ? '—' : num_(x, 1) + '%') + '</span>'; }).join('') + '</div>';
+}
+function gxPendek_(t, n) { t = String(t); return t.length > n ? t.slice(0, n - 1).trim() + '…' : t; }
+
+/** Grafik ringkas halaman awal Monev: semua sasaran. */
+function viewMonevGrafik_(mm) {
+  if (!mm.sasaran.length) return '';
+  const seri = mm.sasaran.map((r, n) => ({ nama: String(r.Teks), pendek: gxPendek_(r.Teks, 34), warna: GX_WARNA_[n % GX_WARNA_.length], c: gxCapTW_(mm, mm.ik.filter(i => i.sasaranId === String(r.ID))) }));
+  const akhir = seri.map(k => { const li = gxTerakhir_(k.c); return li < 0 ? null : k.c[li]; });
+  const terisi = akhir.filter(x => x !== null), tercapai = terisi.filter(x => x >= 100).length, perhatian = terisi.filter(x => x < 90).length, rata = gxRata_(akhir);
+  let h = '<div class="gx-kpi">' + gxKpi_('Sasaran program', String(mm.sasaran.length), 'Dengan ' + mm.ik.length + ' indikator kinerja') +
+    gxKpi_('Rata-rata capaian', rata === null ? '—' : num_(rata, 1) + '%', 'TW terakhir terisi tiap sasaran', GX_TIER_(rata)) +
+    gxKpi_('Sasaran tercapai', tercapai + ' dari ' + mm.sasaran.length, 'Capaian ≥ 100%', tercapai ? 'ok' : 'mute') +
+    gxKpi_('Perlu perhatian', perhatian + ' sasaran', 'Capaian di bawah 90%', perhatian ? 'crit' : 'ok') + '</div>';
+  if (!terisi.length) return h + '<section class="card card-pad gx-panel"><h2 class="h2 flat">Capaian Realisasi terhadap Target — ' + mm.tahun + '</h2>' + kosong_('Grafik muncul setelah Target dan Realisasi IK diisi.', 'bar_chart') + '</section>';
+  return h + '<div class="gx-2">' + gxPanel_(seri, 'Capaian Realisasi terhadap Target — ' + mm.tahun, 'Capaian = realisasi ÷ target, rata-rata IK pada tiap sasaran. Garis putus-putus = target (100%).') +
+    '<section class="card card-pad gx-panel"><h2 class="h2 flat">Posisi Terakhir per Sasaran</h2><p class="muted sm" style="margin-bottom:10px">Capaian pada triwulan terakhir yang sudah diisi.</p>' + gxPosisi_(seri) + '</section></div>';
+}
+
+/** Pratinjau grafik di atas halaman satu sasaran: tiap IK sebagai satu seri. */
+function viewMonevGrafikSasaran_(mm, ikS) {
+  if (!ikS.length) return '';
+  const seri = ikS.map((i, n) => ({ nama: i.nama, pendek: gxPendek_(i.nama, 34), warna: GX_WARNA_[n % GX_WARNA_.length], c: gxCapTW_(mm, [i]) }));
+  const total = gxCapTW_(mm, ikS), li = gxTerakhir_(total), cap = li < 0 ? null : total[li];
+  if (li < 0) return '<section class="card card-pad gx-panel gx-pre"><h2 class="h2 flat">Pratinjau Capaian — ' + mm.tahun + '</h2>' + kosong_('Belum ada capaian. Isi Target dan Realisasi pada tab di bawah untuk melihat grafik.', 'bar_chart') + '</section>';
+  const tercapai = seri.filter(k => { const l = gxTerakhir_(k.c); return l >= 0 && k.c[l] >= 100; }).length;
+  return '<div class="gx-kpi gx-kpi3">' + gxKpi_('Capaian sasaran', num_(cap, 1) + '%', 'Rata-rata IK · TW ' + (li + 1), GX_TIER_(cap)) +
+    gxKpi_('IK tercapai', tercapai + ' dari ' + ikS.length, 'Capaian ≥ 100%', tercapai ? 'ok' : 'mute') +
+    gxKpi_('IK sudah berdata', seri.filter(k => gxTerakhir_(k.c) >= 0).length + ' dari ' + ikS.length, 'Punya target dan realisasi') + '</div>' +
+    gxPanel_(seri, 'Pratinjau Capaian — ' + mm.tahun, 'Capaian tiap IK terhadap targetnya per triwulan. Garis putus-putus = target (100%).').replace('gx-panel"', 'gx-panel gx-pre"');
+}
+
 function viewMonevDaftar_(mm, user) {
   const adm = user.role === 'admin';
   let h = '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Tujuan / Sasaran Program</h2><p class="muted sm">Pilih satu sasaran untuk membuka Program, IK, Target, Realisasi, Bukti Dukung, Unit PIC, Catatan, dan Keterangannya.</p></div>' +
@@ -1065,7 +1169,7 @@ function viewMonevDaftar_(mm, user) {
     const jmlP = mm.program.filter(p => String(p.Induk) === id).length;
     const jmlB = mm.bukti.filter(b => ikS.some(i => 'MV:' + i.id === String(b.IndikatorID))).length;
     return '<div class="tung"><div class="tung-main"><b>' + (n + 1) + '. ' + esc_(r.Teks) + '</b><div class="chips-row">' +
-      chip_('info', jmlP + ' program') + ' ' + chip_('info', ikS.length + ' IK') + ' ' + chip_('mute', jmlB + ' bukti') + '</div></div>' +
+      chip_('info', jmlP + ' program') + ' ' + chip_('info', ikS.length + ' IK') + ' ' + chip_('mute', jmlB + ' bukti') + '</div>' + gxPills_(gxCapTW_(mm, ikS)) + '</div>' +
       '<div class="tung-end">' + '<button type="button" class="btn btn-primary btn-sm" data-nav="monev" data-params=\'' + esc_(JSON.stringify({ sasaran: id })) + '\'>Buka' + ic_('chevron_right') + '</button>' +
       (adm ? mvBtn_('Ubah', 'sasaran', { id: id, teks: String(r.Teks) }, '', 'btn-ghost') + mvHapus_(r.ID) : '') + '</div></div>';
   }).join('') + '</div></section>';
@@ -1182,7 +1286,7 @@ function pageMonev_(m, user, params, ctx) {
   const sr = params.sasaran ? all.sasaran.find(r => String(r.ID) === String(params.sasaran)) : null;
   if (!sr) {
     return pageHead_('Monev Kinerja', 'Pemantauan dan evaluasi kinerja per tujuan / sasaran program.', '<span class="chip chip-info">' + all.sasaran.length + ' sasaran</span>') +
-      monevMeta_(all, user) + viewMonevDaftar_(all, user);
+      monevMeta_(all, user) + viewMonevGrafik_(all) + viewMonevDaftar_(all, user);
   }
   const sid = String(sr.ID), ikS = all.ik.filter(i => i.sasaranId === sid), ids = ikS.map(i => i.id);
   const mm = Object.assign({}, all, {
@@ -1194,6 +1298,7 @@ function pageMonev_(m, user, params, ctx) {
   const tw = MONEV_TWTAB_.some(t => t.id === params.tw) ? params.tw : 'TW' + Math.ceil(m.bulan / 3);
   let h = '<nav class="crumb" aria-label="Navigasi"><button type="button" class="btn btn-ghost btn-sm" data-nav="monev" data-params="{}">' + ic_('arrow_back') + 'Semua sasaran</button></nav>';
   h += pageHead_(sr.Teks, 'Tujuan / Sasaran Program · ' + sid, '<span class="chip chip-info">' + ikS.length + ' IK</span>');
+  h += viewMonevGrafikSasaran_(all, ikS);
   h += '<div class="seg seg-main" role="group" aria-label="Isi sasaran program">' + tabsInd_('monev', params, 'view', MONEV_VIEW_, view, { sasaran: sid }) + '</div>';
   h += monevMeta_(mm, user);
   if (user.role === 'pic' && !ikS.some(i => monevBolehUbah_(user, 'realisasi', i.id))) h += '<div class="card card-flat card-pad muted sm">Belum ada IK pada sasaran ini yang ditugaskan ke unit atau akun Anda. Hubungi admin untuk menetapkan Unit PIC.</div>';

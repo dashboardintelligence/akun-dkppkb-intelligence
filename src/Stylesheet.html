@@ -504,4 +504,23 @@ button.im-m:focus-visible{outline:2px solid var(--p);outline-offset:2px}
 .is-kab td,.is-kab th{padding:6px 8px}.is-kab .input{min-width:90px;width:100%}.is-prev{margin:10px 0 14px;padding:10px 14px;border-radius:12px;background:var(--surface-2,#eef6fb);font-size:.92rem}
 .note-ar{padding:10px 14px;border-radius:12px;border:1px solid var(--outline,#d5dde5)}.note-ar p{margin:6px 0 0}.tbl tr.tot td{border-top:2px solid var(--outline,#cbd5e1)}
 th.kb-pcell[hidden],td.kb-pcell[hidden]{display:none}
+
+/* Grafik capaian Monev */
+.gx-kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:14px}
+.gx-kpi3{grid-template-columns:repeat(3,1fr)}
+.gx-k .gx-kv{font-size:30px;font-weight:700;line-height:1.2}
+.gx-2{display:grid;grid-template-columns:1.6fr 1fr;gap:14px;margin-bottom:14px}
+.gx-pre{margin-bottom:14px}
+.gx-top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+.gx-leg{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--tx2);margin:2px 0 6px}
+.gx-sw{display:inline-block;width:14px;height:12px;border-radius:3px;vertical-align:-1px;margin-right:6px}
+.gx-var[hidden]{display:none}
+.gx-tx{fill:var(--tx2)}.gx-val,.gx-tw,.gx-lbl{fill:var(--tx)}
+.gx-val{paint-order:stroke;stroke:var(--card);stroke-width:3.5px;stroke-linejoin:round}
+.gx-gr{stroke:var(--bd)}.gx-trk{fill:var(--rail)}
+.gx-100{stroke:var(--tx)}.gx-100t{fill:var(--tx)}
+.gx-pills{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.gx-pill{display:inline-flex;align-items:center;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:700}
+.gx-p-ok{background:#dcfce7;color:#15803d}.gx-p-warn{background:#fef3c7;color:#b45309}.gx-p-crit{background:#fee2e2;color:#b91c1c}.gx-p-mute{background:var(--rail);color:var(--tx2)}
+@media (max-width:900px){.gx-kpi{grid-template-columns:repeat(2,1fr)}.gx-kpi3{grid-template-columns:1fr}.gx-2{grid-template-columns:1fr}}
 </style>

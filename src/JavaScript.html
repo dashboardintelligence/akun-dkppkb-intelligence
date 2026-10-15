@@ -908,6 +908,14 @@
         break;
       }
       case 'isian': openIsian({ id: el.dataset.id, bulan: el.dataset.bulan, nama: el.dataset.nama, satuan: el.dataset.satuan, real: el.dataset.real, kab: el.dataset.kab, cat: el.dataset.cat }); break;
+      case 'gx-tw': {
+        var pn = el.closest('.gx-panel'), v = el.getAttribute('data-v');
+        if (pn) {
+          pn.querySelectorAll('.vt-btn').forEach(function (b) { b.classList.toggle('is-on', b === el); });
+          pn.querySelectorAll('.gx-var').forEach(function (d) { d.hidden = d.getAttribute('data-gx') !== v; });
+        }
+        break;
+      }
       case 'im-layout': { var lv = el.getAttribute('data-v'); try { localStorage.setItem('dkppkb_im_layout', lv); } catch (e) { } applyImLayout(lv); break; }
       case 'remind-open': openRemind(); break;
       case 'bukti': openBukti(el.getAttribute('data-id'), el.getAttribute('data-nama')); break;
