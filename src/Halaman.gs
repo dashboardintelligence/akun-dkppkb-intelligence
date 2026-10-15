@@ -684,7 +684,9 @@ function pageInputData_(m, user, params, ctx) {
   h += '<div class="filters card card-flat"><label class="search"><span class="sr">Cari indikator</span>' + ic_('search') + '<input type="search" class="input input-search f-param" data-param="q" value="' + esc_(params.q || '') + '" placeholder="Cari nama, ID, atau program" maxlength="60"></label>' +
     filterSel_('Status', 'status', [{ v: '', t: 'Semua indikator' }, { v: 'perlu', t: 'Perlu diisi' }, { v: 'menunggu', t: 'Menunggu verifikasi' }], fs) +
     (adm ? filterSel_('Bidang', 'bidang', [{ v: '', t: 'Semua bidang' }].concat(m.bidang.map(b => ({ v: b.nama, t: b.nama }))), fb) : '') + '</div>';
-  h += '<div class="legend legend-heat"><span><i class="hc hc-ok"></i>Lengkap</span><span><i class="hc hc-wait"></i>Menunggu verifikasi</span><span><i class="hc hc-miss"></i>Belum diisi</span><span><i class="hc hc-future"></i>Belum jatuh tempo</span></div>';
+  h += '<div class="im-bar"><div class="legend legend-heat"><span><i class="hc hc-ok"></i>Lengkap</span><span><i class="hc hc-wait"></i>Menunggu verifikasi</span><span><i class="hc hc-miss"></i>Belum diisi</span><span><i class="hc hc-future"></i>Belum jatuh tempo</span></div>' +
+    '<div class="view-toggle" role="group" aria-label="Tampilan daftar indikator"><button type="button" class="vt-btn is-on" data-act="im-layout" data-v="grid" aria-pressed="true">' + ic_('grid_view') + '<span>Grid</span></button>' +
+    '<button type="button" class="vt-btn" data-act="im-layout" data-v="list" aria-pressed="false">' + ic_('view_list') + '<span>List</span></button></div></div>';
   if (!li.length) return h + '<section class="card card-pad">' + kosong_(semua.length ? 'Tidak ada indikator yang cocok dengan filter.' : 'Belum ada indikator yang ditugaskan kepada Anda. Hubungi admin.', 'inbox') + '</section>';
   h += '<div class="im-grid">' + li.map(i => {
     const lbl = { ok: 'Lengkap', wait: 'Menunggu verifikasi', miss: 'Belum diisi', future: 'Belum jatuh tempo', na: 'Tidak wajib' };

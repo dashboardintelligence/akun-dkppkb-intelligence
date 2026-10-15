@@ -344,6 +344,14 @@
       c.innerHTML = '<div class="card card-pad empty"><span class="ic">cloud_off</span><p>' + esc(e.message) + '</p><button type="button" class="btn btn-primary" data-act="reload">Coba lagi</button></div>';
     });
   }
+  /* ---------- tampilan Input Data: grid / list ---------- */
+  function applyImLayout(v) {
+    var bar = $('.view-toggle'); if (!bar) return;
+    if (!v) { try { v = localStorage.getItem('dkppkb_im_layout'); } catch (e) { } }
+    v = v === 'list' ? 'list' : 'grid';
+    var g = $('.im-grid'); if (g) g.classList.toggle('im-list', v === 'list');
+    $$('.vt-btn', bar).forEach(function (b) { var on = b.getAttribute('data-v') === v; b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+  }
   function injectPage(page, html, title, opts) {
     var keepY = opts && opts.keep ? window.scrollY : 0;
     $('#app-container').innerHTML = html;
@@ -353,6 +361,7 @@
     AppState.rendered = true; updBack();
     window.scrollTo(0, keepY);
     if (!(opts && opts.keep)) { try { $('#main').focus({ preventScroll: true }); } catch (e) { } }
+    applyImLayout();
     var fib = $('#form-ind-baru'); if (fib) syncIndBaru(fib);
     var ftk = $('#form-tarik'); if (ftk) syncTarik(ftk);
     if (page === 'pengguna' && AppState.params && AppState.params.tambah) { delete AppState.params.tambah; openUserForm({}); }
@@ -899,6 +908,7 @@
         break;
       }
       case 'isian': openIsian({ id: el.dataset.id, bulan: el.dataset.bulan, nama: el.dataset.nama, satuan: el.dataset.satuan, real: el.dataset.real, kab: el.dataset.kab, cat: el.dataset.cat }); break;
+      case 'im-layout': { var lv = el.getAttribute('data-v'); try { localStorage.setItem('dkppkb_im_layout', lv); } catch (e) { } applyImLayout(lv); break; }
       case 'remind-open': openRemind(); break;
       case 'bukti': openBukti(el.getAttribute('data-id'), el.getAttribute('data-nama')); break;
       case 'bukti-unduh': {
