@@ -328,7 +328,7 @@
       if (!r) throw new Error('Respons kosong dari server.');
       if (r.expired) return forceLogout(r.message);
       if (!r.success) { c.innerHTML = '<div class="card card-pad empty"><span class="ic">cloud_off</span><p>' + esc(r.message || 'Gagal memuat halaman.') + '</p><button type="button" class="btn btn-primary" data-act="reload">Coba lagi</button></div>'; return; }
-      if (r.redirect) { if (r.message) toast(r.message, 'err'); return navigateTo(r.redirect, {}, { redirect: true }); }
+      if (r.redirect) { if (r.message) toast(r.message + ' (halaman: ' + page + ')', 'err'); return navigateTo(r.redirect, {}, { redirect: true }); }
       var ckeys = Object.keys(PCACHE); if (ckeys.length > 150) delete PCACHE[ckeys[0]];
       PCACHE[ckey] = { html: r.html, title: r.title, t: Date.now() };
       if (hit) {
