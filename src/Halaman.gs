@@ -1137,13 +1137,12 @@ function viewMonevGrafik_(mm) {
   const seri = mm.sasaran.map((r, n) => ({ nama: String(r.Teks), pendek: gxPendek_(r.Teks, 34), warna: GX_WARNA_[n % GX_WARNA_.length], c: gxCapTW_(mm, mm.ik.filter(i => i.sasaranId === String(r.ID))) }));
   const akhir = seri.map(k => { const li = gxTerakhir_(k.c); return li < 0 ? null : k.c[li]; });
   const terisi = akhir.filter(x => x !== null), tercapai = terisi.filter(x => x >= 100).length, perhatian = terisi.filter(x => x < 90).length, rata = gxRata_(akhir);
-  let h = '<div class="gx-kpi">' + gxKpi_('Sasaran program', String(mm.sasaran.length), 'Dengan ' + mm.ik.length + ' indikator kinerja') +
+  let h = '<div class="gx-kpi gx-kpi3">' +
     gxKpi_('Rata-rata capaian', rata === null ? '—' : num_(rata, 1) + '%', 'TW terakhir terisi tiap sasaran', GX_TIER_(rata)) +
     gxKpi_('Sasaran tercapai', tercapai + ' dari ' + mm.sasaran.length, 'Capaian ≥ 100%', tercapai ? 'ok' : 'mute') +
     gxKpi_('Perlu perhatian', perhatian + ' sasaran', 'Capaian di bawah 90%', perhatian ? 'crit' : 'ok') + '</div>';
-  if (!terisi.length) return h + '<section class="card card-pad gx-panel"><h2 class="h2 flat">Capaian Realisasi terhadap Target — ' + mm.tahun + '</h2>' + kosong_('Grafik muncul setelah Target dan Realisasi IK diisi.', 'bar_chart') + '</section>';
-  return h + '<div class="gx-2">' + gxPanel_(seri, 'Capaian Realisasi terhadap Target — ' + mm.tahun, 'Capaian = realisasi ÷ target, rata-rata IK pada tiap sasaran. Garis putus-putus = target (100%).') +
-    '<section class="card card-pad gx-panel"><h2 class="h2 flat">Posisi Terakhir per Sasaran</h2><p class="muted sm" style="margin-bottom:10px">Capaian pada triwulan terakhir yang sudah diisi.</p>' + gxPosisi_(seri) + '</section></div>';
+  if (!terisi.length) return h + '<section class="card card-pad gx-panel gx-pre"><h2 class="h2 flat">Capaian Realisasi terhadap Target — ' + mm.tahun + '</h2>' + kosong_('Grafik muncul setelah Target dan Realisasi IK diisi.', 'bar_chart') + '</section>';
+  return h + gxPanel_(seri, 'Capaian Realisasi terhadap Target — ' + mm.tahun, 'Capaian tiap sasaran terhadap targetnya per triwulan. Garis putus-putus = target (100%).').replace('gx-panel"', 'gx-panel gx-pre"');
 }
 
 /** Pratinjau grafik di atas halaman satu sasaran: tiap IK sebagai satu seri. */
