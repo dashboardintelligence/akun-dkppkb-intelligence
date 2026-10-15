@@ -108,6 +108,9 @@
             <div class="field"><label for="mt-format">Format</label><select class="input" id="mt-format" name="format"><option>Excel</option><option>PDF</option><option>Dasbor</option><option>Lainnya</option></select></div>
             <div class="field"><label for="mt-tenggat">Dibutuhkan paling lambat</label><input class="input" id="mt-tenggat" name="tenggat" type="date"></div>
           </div>
+          <div class="field"><label for="mt-file">Dokumen pendukung (opsional)</label>
+            <input class="input input-file" id="mt-file" name="berkas" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt">
+            <span class="muted sm">Misalnya surat permohonan. PDF, gambar, Word, Excel, PowerPoint, CSV, atau TXT. Maksimal 5 MB.</span></div>
           <div class="hp" aria-hidden="true"><label>Situs<input type="text" name="situs" tabindex="-1" autocomplete="off"></label></div>
           <p class="form-msg" id="minta-msg" role="alert"></p>
           <button class="btn btn-primary btn-block" type="submit" id="minta-btn">Kirim Permintaan</button>

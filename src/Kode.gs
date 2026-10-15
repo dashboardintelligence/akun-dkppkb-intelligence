@@ -25,7 +25,7 @@ const HEADERS = {
   Isian: ['IndikatorID', 'Tahun', 'Bulan', 'Realisasi', 'Status', 'KabTertunda', 'Catatan', 'DiisiOleh', 'DiisiPada', 'Analisis', 'Rekomendasi'],
   Users: ['Username', 'Nama', 'Role', 'Bidang', 'Email', 'Telepon', 'Salt', 'Hash', 'Aktif', 'Program', 'Indikator'],
   Masalah: ['ID', 'Tanggal', 'IndikatorID', 'Bidang', 'Permasalahan', 'Rekomendasi', 'Prioritas', 'Status', 'Penanggung', 'Tenggat', 'DibuatOleh'],
-  PermintaanData: ['ID', 'Tanggal', 'Pemohon', 'Instansi', 'Kebutuhan', 'Format', 'Tenggat', 'Status', 'Catatan'],
+  PermintaanData: ['ID', 'Tanggal', 'Pemohon', 'Instansi', 'Kebutuhan', 'Format', 'Tenggat', 'Status', 'Catatan', 'Lampiran'],
   Log: ['Waktu', 'Jenis', 'Aktor', 'Deskripsi'],
   Program: ['ID', 'Nama', 'Bidang', 'Sub', 'Aktif'],
   Target: ['IndikatorID', 'Tahun', 'Periode', 'Target', 'DiubahOleh', 'DiubahPada'],
@@ -60,7 +60,7 @@ function doGet(e) {
 /* ---------------- API JSON (dipakai tampilan statis, mis. GitHub Pages) ----------------
  * Klien statis mengirim POST text/plain berisi {"fn":"nama","args":[...]} ke URL web app.
  * Hanya fungsi pada daftar putih di bawah yang boleh dipanggil; otorisasi tetap lewat token sesi. */
-const API_JSON_ = ['apiMerek', 'apiMulai', 'apiAjukanDataPublik', 'doLogin', 'doLogout', 'getPageContent', 'apiBootstrap', 'apiAmbilIsian', 'apiSimpanIsian', 'apiVerifikasi', 'apiKirimPengingat',
+const API_JSON_ = ['apiMerek', 'apiMulai', 'apiAjukanDataPublik', 'apiUnduhLampiranPermintaan', 'doLogin', 'doLogout', 'getPageContent', 'apiBootstrap', 'apiAmbilIsian', 'apiSimpanIsian', 'apiVerifikasi', 'apiKirimPengingat',
   'apiSimpanMasalah', 'apiUbahStatusMasalah', 'apiSimpanPermintaan', 'apiUbahStatusPermintaan', 'apiSimpanConfig', 'apiSimpanIndikator', 'apiSimpanProgram',
   'apiSimpanTarget', 'apiSimpanUser', 'apiResetPassword', 'apiUbahStatusUser', 'apiUbahPassword', 'apiExportPdf', 'apiDaftarBukti', 'apiUnggahBukti',
   'apiUnduhBukti', 'apiHapusBukti', 'apiTarikData', 'apiSimpanMonev', 'apiHapusMonev', 'apiUnggahBuktiMonev', 'apiUnduhBuktiMonev', 'apiHapusBuktiMonev'];
@@ -372,6 +372,22 @@ function apiMulai(token) {
   });
 }
 
+const PUBLIK_MAKS_BYTE = 5 * 1024 * 1024;
+
+/** Unduh lampiran permintaan data. Admin dan pimpinan: semua; lainnya: hanya milik sendiri. */
+function apiUnduhLampiranPermintaan(token, id) {
+  return run_(() => {
+    const user = auth_(token);
+    const r = readTable_(SHEET.PERMINTAAN).find(x => String(x.ID) === String(id));
+    if (!r || !r.Lampiran) throw new Error('Lampiran tidak ditemukan.');
+    if (user.role !== 'admin' && user.role !== 'pimpinan' && r.Pemohon !== user.nama) throw new Error('Anda tidak berhak membuka lampiran ini.');
+    let l; try { l = JSON.parse(String(r.Lampiran)); } catch (e) { throw new Error('Data lampiran rusak.'); }
+    let blob;
+    try { blob = DriveApp.getFileById(String(l.id)).getBlob(); } catch (e) { throw new Error('File lampiran tidak ditemukan di Google Drive. Mungkin sudah dihapus dari folder.'); }
+    return { nama: String(l.nama), mime: BUKTI_TIPE[String(l.tipe)] || 'application/octet-stream', base64: Utilities.base64Encode(blob.getBytes()) };
+  });
+}
+
 /** Permintaan data dari publik (tanpa akun) lewat halaman awal. Dibatasi agar tidak disalahgunakan. */
 function apiAjukanDataPublik(p) {
   return run_(() => {
@@ -388,10 +404,25 @@ function apiAjukanDataPublik(p) {
     cache.put(kunci, String(n + 1), 3700);
     const format = ['Excel', 'PDF', 'Dasbor', 'Lainnya'].indexOf(p.format) >= 0 ? p.format : 'Excel';
     const tg = /^\d{4}-\d{2}-\d{2}$/.test(String(p.tenggat || '')) ? String(p.tenggat) : '';
-    const id = 'PD-' + Utilities.formatDate(new Date(), TZ, 'yyMMddHHmmss');
+    const id = 'PD-' + Utilities.formatDate(new Date(), TZ, 'yyMMddHHmmss') + '-' + Utilities.getUuid().slice(0, 4);   // akhiran acak: dua pengirim di detik yang sama tidak bentrok
+    // Lampiran dokumen (opsional): satu berkas, maksimal 5 MB
+    let lampiran = '';
+    const bk = p.berkas;
+    if (bk && bk.base64) {
+      const asli = String(bk.nama || '').replace(/[\\\/]/g, '_').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 120);
+      const ext = (asli.split('.').length > 1 ? asli.split('.').pop() : '').toLowerCase();
+      if (!ext || !BUKTI_TIPE[ext]) throw new Error('Jenis file tidak didukung. Pakai PDF, gambar (JPG, PNG, WebP), Word, Excel, PowerPoint, CSV, atau TXT.');
+      const b64 = String(bk.base64);
+      if (b64.length > PUBLIK_MAKS_BYTE * 1.4) throw new Error('Lampiran lebih besar dari ' + (PUBLIK_MAKS_BYTE / 1048576) + ' MB.');
+      const bytes = Utilities.base64Decode(b64);
+      if (!bytes.length) throw new Error('Lampiran kosong.');
+      if (bytes.length > PUBLIK_MAKS_BYTE) throw new Error('Lampiran lebih besar dari ' + (PUBLIK_MAKS_BYTE / 1048576) + ' MB.');
+      const file = folderBukti_().createFile(Utilities.newBlob(bytes, BUKTI_TIPE[ext], 'PERMINTAAN_' + id + '_' + asli));
+      lampiran = JSON.stringify({ id: file.getId(), nama: asli, tipe: ext, ukuran: bytes.length });
+    }
     appendObj_(SHEET.PERMINTAAN, {
       ID: id, Tanggal: nowStr_(), Pemohon: nama, Instansi: instansi, Kebutuhan: keb, Format: format, Tenggat: tg,
-      Status: 'Baru', Catatan: 'Kontak: ' + kontak + ' · via halaman awal'
+      Status: 'Baru', Catatan: 'Kontak: ' + kontak + ' · via halaman awal', Lampiran: lampiran
     });
     catatLog_('permintaan', 'publik', 'Permintaan data publik ' + id + ' dari ' + nama);
     return { id: id };

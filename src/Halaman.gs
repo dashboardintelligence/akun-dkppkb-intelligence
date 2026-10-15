@@ -707,6 +707,16 @@ function pageInputData_(m, user, params, ctx) {
 
 /* ---------------- Halaman: Permintaan Data ---------------- */
 
+/** Baris lampiran pada satu permintaan data (bila ada): nama berkas + Pratinjau + Unduh. */
+function lampiranPmt_(x) {
+  if (!x.Lampiran) return '';
+  let l; try { l = JSON.parse(String(x.Lampiran)); } catch (e) { return ''; }
+  const lihat = ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'txt', 'csv'].indexOf(String(l.tipe).toLowerCase()) >= 0;
+  return '<div class="chips-row">' + chip_('info', 'Lampiran: ' + l.nama) + ' ' +
+    (lihat ? '<button type="button" class="btn btn-ghost btn-sm" data-act="pmt-lihat" data-id="' + esc_(x.ID) + '">Pratinjau</button>' : '') +
+    '<button type="button" class="btn btn-ghost btn-sm" data-act="pmt-unduh" data-id="' + esc_(x.ID) + '">Unduh</button></div>';
+}
+
 function pagePermintaan_(m, user) {
   const all = readTable_(SHEET.PERMINTAAN).sort((a, b) => String(b.Tanggal).localeCompare(String(a.Tanggal)));
   const list = user.role === 'admin' ? all : all.filter(x => x.Pemohon === user.nama);
@@ -716,7 +726,7 @@ function pagePermintaan_(m, user) {
     field_('Data yang dibutuhkan', 'kebutuhan', 'textarea', '', 'required maxlength="1000" rows="3" placeholder="Contoh: capaian imunisasi dasar lengkap per kabupaten semester I"') +
     '<div class="form-actions"><button class="btn btn-alert" type="submit">Kirim Permintaan</button></div><p class="form-msg" role="alert"></p></form></section>';
   h += '<section class="card card-pad"><div class="sec-top"><h2 class="h2 flat">' + (user.role === 'admin' ? 'Semua Permintaan' : 'Permintaan Saya') + '</h2>' + chip_('info', list.length + ' permintaan') + '</div>';
-  h += list.length ? '<div class="stack">' + list.map(x => '<div class="tung"><div class="tung-main"><b>' + esc_(x.Kebutuhan) + '</b><span class="muted sm">' + esc_(x.ID) + ' · ' + esc_(x.Pemohon) + ' (' + esc_(x.Instansi) + ') · ' + esc_(tglId_(x.Tanggal)) + ' · ' + esc_(x.Format) + (x.Tenggat ? ' · paling lambat ' + esc_(tglId_(x.Tenggat)) : '') + '</span>' + (x.Catatan ? '<span class="muted sm">Catatan: ' + esc_(x.Catatan) + '</span>' : '') + '</div>' +
+  h += list.length ? '<div class="stack">' + list.map(x => '<div class="tung"><div class="tung-main"><b>' + esc_(x.Kebutuhan) + '</b><span class="muted sm">' + esc_(x.ID) + ' · ' + esc_(x.Pemohon) + ' (' + esc_(x.Instansi) + ') · ' + esc_(tglId_(x.Tanggal)) + ' · ' + esc_(x.Format) + (x.Tenggat ? ' · paling lambat ' + esc_(tglId_(x.Tenggat)) : '') + '</span>' + (x.Catatan ? '<span class="muted sm">Catatan: ' + esc_(x.Catatan) + '</span>' : '') + lampiranPmt_(x) + '</div>' +
     '<div class="tung-end">' + chip_({ Baru: 'warn', Diproses: 'info', Selesai: 'ok', Ditolak: 'crit' }[x.Status] || 'mute', x.Status) +
     (user.role === 'admin' ? ['Diproses', 'Selesai', 'Ditolak'].filter(s => s !== x.Status).map(s => '<button type="button" class="btn btn-ghost btn-sm" data-act="permintaan-status" data-id="' + esc_(x.ID) + '" data-status="' + s + '">' + s + '</button>').join('') : '') + '</div></div>').join('') + '</div>' : kosong_('Belum ada permintaan.', 'inbox');
   return h + '</section>';

@@ -71,7 +71,7 @@
     });
   }
   /** Panggil API ber-token. Mengembalikan data atau melempar Error; sesi habis -> kembali ke login. */
-  var PCACHE = {}, READ_API = { apiBootstrap: 1, apiMulai: 1, apiAmbilIsian: 1, apiDaftarBukti: 1, apiUnduhBukti: 1, apiTarikData: 1, apiUnduhBuktiMonev: 1 };
+  var PCACHE = {}, READ_API = { apiBootstrap: 1, apiMulai: 1, apiUnduhLampiranPermintaan: 1, apiAmbilIsian: 1, apiDaftarBukti: 1, apiUnduhBukti: 1, apiTarikData: 1, apiUnduhBuktiMonev: 1 };
   function api(fn, args) {
     if (!READ_API[fn]) pcReset();   // ada perubahan data: buang cache halaman
     args = [AppState.sessionToken].concat(args || []);
@@ -205,16 +205,24 @@
     landShow(msg ? 'login' : 'pilih');
   }
   function submitMinta(e) {
-    var f = $('#form-minta'), btn = $('#minta-btn'), msg = $('#minta-msg'), d = {};
+    var f = $('#form-minta'), btn = $('#minta-btn'), msg = $('#minta-msg'), d = {}, file = $('#mt-file').files[0];
     msg.textContent = '';
     ['nama', 'instansi', 'kontak', 'kebutuhan', 'format', 'tenggat', 'situs'].forEach(function (k) { d[k] = (f.elements[k] && f.elements[k].value) || ''; });
-    btn.disabled = true; btn.textContent = 'Mengirim…';
-    call('apiAjukanDataPublik', [d]).then(function (r) {
-      if (!r || !r.success) throw new Error((r && r.message) || 'Gagal mengirim permintaan.');
-      $('#minta-id').textContent = r.data.id; f.reset();
-      show($('#minta-form-wrap'), false); show($('#minta-ok'), true);
-    }).catch(function (err) { msg.textContent = err.message; })
-      .then(function () { btn.disabled = false; btn.textContent = 'Kirim Permintaan'; });
+    if (file && file.size > 5 * 1048576) { msg.textContent = 'Ukuran dokumen ' + ukuranTeks(file.size) + ' melebihi batas 5 MB.'; return false; }
+    function kirim() {
+      btn.disabled = true; btn.textContent = file ? 'Mengunggah…' : 'Mengirim…';
+      call('apiAjukanDataPublik', [d]).then(function (r) {
+        if (!r || !r.success) throw new Error((r && r.message) || 'Gagal mengirim permintaan.');
+        $('#minta-id').textContent = r.data.id; f.reset();
+        show($('#minta-form-wrap'), false); show($('#minta-ok'), true);
+      }).catch(function (err) { msg.textContent = err.message; })
+        .then(function () { btn.disabled = false; btn.textContent = 'Kirim Permintaan'; });
+    }
+    if (!file) { kirim(); return false; }
+    var fr = new FileReader();
+    fr.onerror = function () { msg.textContent = 'Dokumen tidak dapat dibaca. Pilih ulang berkasnya.'; };
+    fr.onload = function () { d.berkas = { nama: file.name, base64: String(fr.result).split(',')[1] || '' }; kirim(); };
+    fr.readAsDataURL(file);
     return false;
   }
   function forceLogout(msg) {
@@ -957,6 +965,18 @@
         var ll = el.textContent; el.disabled = true; el.textContent = 'Membuka…';
         api('apiUnduhBukti', [el.getAttribute('data-id')]).then(pratinjauB64)
           .catch(function (e) { if (!e.handled) toast(e.message, 'err'); }).then(function () { el.disabled = false; el.textContent = ll; });
+        break;
+      }
+      case 'pmt-lihat': {
+        var lp = el.textContent; el.disabled = true; el.textContent = 'Membuka…';
+        api('apiUnduhLampiranPermintaan', [el.getAttribute('data-id')]).then(pratinjauB64)
+          .catch(function (e) { if (!e.handled) toast(e.message, 'err'); }).then(function () { el.disabled = false; el.textContent = lp; });
+        break;
+      }
+      case 'pmt-unduh': {
+        var lu = el.textContent; el.disabled = true; el.textContent = 'Menyiapkan…';
+        api('apiUnduhLampiranPermintaan', [el.getAttribute('data-id')]).then(function (r) { unduhB64(r.nama, r.base64, r.mime); })
+          .catch(function (e) { if (!e.handled) toast(e.message, 'err'); }).then(function () { el.disabled = false; el.textContent = lu; });
         break;
       }
       case 'mbukti-lihat': {
