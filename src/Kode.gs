@@ -15,18 +15,19 @@ const SESI_DETIK = 21600; // 6 jam (batas maksimum CacheService)
 
 const SHEET = {
   CONFIG: 'Config', BIDANG: 'Bidang', INDIKATOR: 'Indikator', ISIAN: 'Isian',
-  USERS: 'Users', MASALAH: 'Masalah', PERMINTAAN: 'PermintaanData', LOG: 'Log', PROGRAM: 'Program', TARGET: 'Target', BUKTI: 'Bukti', MONEV: 'Monev', KALENDER: 'Kalender'
+  USERS: 'Users', MASALAH: 'Masalah', PERMINTAAN: 'PermintaanData', LOG: 'Log', PROGRAM: 'Program', TARGET: 'Target', BUKTI: 'Bukti', MONEV: 'Monev', KALENDER: 'Kalender', SPBE: 'SPBE'
 };
 
 const HEADERS = {
   Config: ['Kunci', 'Nilai'],
   Bidang: ['Nama', 'Ikon', 'Urutan'],
-  Indikator: ['ID', 'Nama', 'Bidang', 'Jenis', 'Frekuensi', 'Satuan', 'Target', 'Arah', 'PIC', 'Aktif', 'Program', 'Keterangan'],
+  Indikator: ['ID', 'Nama', 'Bidang', 'Jenis', 'Frekuensi', 'Satuan', 'Target', 'Arah', 'PIC', 'Aktif', 'Program', 'Keterangan', 'Unggulan'],
   Isian: ['IndikatorID', 'Tahun', 'Bulan', 'Realisasi', 'Status', 'KabTertunda', 'Catatan', 'DiisiOleh', 'DiisiPada', 'Analisis', 'Rekomendasi'],
   Users: ['Username', 'Nama', 'Role', 'Bidang', 'Email', 'Telepon', 'Salt', 'Hash', 'Aktif', 'Program', 'Indikator'],
   Masalah: ['ID', 'Tanggal', 'IndikatorID', 'Bidang', 'Permasalahan', 'Rekomendasi', 'Prioritas', 'Status', 'Penanggung', 'Tenggat', 'DibuatOleh'],
   PermintaanData: ['ID', 'Tanggal', 'Pemohon', 'Instansi', 'Kebutuhan', 'Format', 'Tenggat', 'Status', 'Catatan', 'Lampiran', 'Kontak', 'Sumber', 'DitinjauOleh', 'DitinjauPada'],
   Log: ['Waktu', 'Jenis', 'Aktor', 'Deskripsi'],
+  SPBE: ['Kunci', 'Tahun', 'Triwulan', 'No', 'Level', 'Target', 'Catatan', 'Bukti', 'DiisiOleh', 'DiisiPada'],
   Kalender: ['ID', 'Judul', 'Mulai', 'Selesai', 'Jam', 'Tempat', 'Jenis', 'Bidang', 'Publik', 'DibuatOleh', 'DibuatPada'],
   Program: ['ID', 'Nama', 'Bidang', 'Sub', 'Aktif'],
   Target: ['IndikatorID', 'Tahun', 'Periode', 'Target', 'DiubahOleh', 'DiubahPada'],
@@ -61,7 +62,7 @@ function doGet(e) {
 /* ---------------- API JSON (dipakai tampilan statis, mis. GitHub Pages) ----------------
  * Klien statis mengirim POST text/plain berisi {"fn":"nama","args":[...]} ke URL web app.
  * Hanya fungsi pada daftar putih di bawah yang boleh dipanggil; otorisasi tetap lewat token sesi. */
-const API_JSON_ = ['apiMerek', 'apiKalenderPublik', 'apiSimpanKegiatan', 'apiHapusKegiatan', 'apiMulai', 'apiAjukanDataPublik', 'apiUnduhLampiranPermintaan', 'doLogin', 'doLogout', 'getPageContent', 'apiBootstrap', 'apiAmbilIsian', 'apiSimpanIsian', 'apiVerifikasi', 'apiKirimPengingat',
+const API_JSON_ = ['apiMerek', 'apiSimpanSpbe', 'apiKalenderPublik', 'apiSimpanKegiatan', 'apiHapusKegiatan', 'apiMulai', 'apiAjukanDataPublik', 'apiUnduhLampiranPermintaan', 'doLogin', 'doLogout', 'getPageContent', 'apiBootstrap', 'apiAmbilIsian', 'apiSimpanIsian', 'apiVerifikasi', 'apiKirimPengingat',
   'apiSimpanMasalah', 'apiUbahStatusMasalah', 'apiSimpanPermintaan', 'apiUbahStatusPermintaan', 'apiSimpanConfig', 'apiSimpanIndikator', 'apiSimpanProgram',
   'apiSimpanTarget', 'apiSimpanUser', 'apiResetPassword', 'apiUbahStatusUser', 'apiUbahPassword', 'apiExportPdf', 'apiDaftarBukti', 'apiUnggahBukti',
   'apiUnduhBukti', 'apiHapusBukti', 'apiTarikData', 'apiSimpanMonev', 'apiHapusMonev', 'apiUnggahBuktiMonev', 'apiUnduhBuktiMonev', 'apiHapusBuktiMonev'];
@@ -307,20 +308,57 @@ function hash_(salt, pwd) {
   return Utilities.base64Encode(d);
 }
 
+const SESI_PROP_DETIK = 43200; // cadangan permanen sesi: 12 jam (cache bisa terhapus sewaktu-waktu oleh Google)
+
 function buatSesi_(u) {
   const token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, '');
-  CacheService.getScriptCache().put('s_' + token, JSON.stringify({ u: u.Username, n: u.Nama, r: u.Role, b: u.Bidang, p: String(u.Program || ''), t: Date.now() }), SESI_DETIK);
+  const raw = JSON.stringify({ u: u.Username, n: u.Nama, r: u.Role, b: u.Bidang, p: String(u.Program || ''), t: Date.now() });
+  CacheService.getScriptCache().put('s_' + token, raw, SESI_DETIK);
+  try {
+    sesiBersih_();
+    PropertiesService.getScriptProperties().setProperty('S_' + token, JSON.stringify({ r: raw, x: Date.now() + SESI_PROP_DETIK * 1000 }));
+  } catch (e) { /* tanpa cadangan, sesi tetap berjalan lewat cache */ }
   return token;
+}
+/** Baca sesi: cache dulu, bila terhapus pulihkan dari cadangan (Properties). Mencegah logout mendadak saat cache dibuang. */
+function sesiBaca_(token) {
+  const cache = CacheService.getScriptCache();
+  const raw = cache.get('s_' + token);
+  if (raw) return raw;
+  try {
+    const sp = PropertiesService.getScriptProperties();
+    const p = sp.getProperty('S_' + token);
+    if (!p) return null;
+    const o = JSON.parse(p);
+    if (!o || !o.r || Number(o.x) < Date.now()) { sp.deleteProperty('S_' + token); return null; }
+    cache.put('s_' + token, o.r, SESI_DETIK);
+    return o.r;
+  } catch (e) { return null; }
+}
+function sesiHapus_(token) {
+  try { CacheService.getScriptCache().remove('s_' + token); } catch (e) { }
+  try { PropertiesService.getScriptProperties().deleteProperty('S_' + token); } catch (e) { }
+}
+/** Buang cadangan sesi yang sudah lewat waktu. */
+function sesiBersih_() {
+  const sp = PropertiesService.getScriptProperties();
+  const all = sp.getProperties();
+  Object.keys(all).forEach(key => {
+    if (key.indexOf('S_') !== 0) return;
+    let habis = true;
+    try { habis = Number(JSON.parse(all[key]).x) < Date.now(); } catch (e) { habis = true; }
+    if (habis) sp.deleteProperty(key);
+  });
 }
 
 /** Validasi token. Melempar 'SESI_HABIS' bila tidak valid. */
 function auth_(token, roles) {
   if (!token) throw new Error('SESI_HABIS');
-  const raw = CacheService.getScriptCache().get('s_' + token);
+  const raw = sesiBaca_(token);
   if (!raw) throw new Error('SESI_HABIS');
   const s = JSON.parse(raw);
   const cabut = Number(CacheService.getScriptCache().get('rev_' + s.u) || 0);
-  if (cabut && cabut >= Number(s.t || 0)) { CacheService.getScriptCache().remove('s_' + token); throw new Error('SESI_HABIS'); }
+  if (cabut && cabut >= Number(s.t || 0)) { sesiHapus_(token); throw new Error('SESI_HABIS'); }
   if (roles && roles.indexOf(s.r) < 0) throw new Error('Akses ditolak untuk peran Anda.');
   CacheService.getScriptCache().put('s_' + token, raw, SESI_DETIK);
   return { username: s.u, nama: s.n, role: s.r, bidang: s.b, program: s.p || '' };
@@ -360,7 +398,7 @@ function doLogin(username, password) {
 }
 
 function doLogout(token) {
-  return run_(() => { if (token) CacheService.getScriptCache().remove('s_' + token); return true; });
+  return run_(() => { if (token) sesiHapus_(token); return true; });
 }
 
 /** Satu panggilan untuk memulai aplikasi: data awal + halaman Beranda (menggantikan 2 panggilan terpisah). */
@@ -565,7 +603,7 @@ function hitungModel_(tahun, bulan, saring) {
       const upd = last && last.r ? last.r : (rowLastDue || null);
       return {
         id: String(i.ID), nama: String(i.Nama), bidang: String(i.Bidang), jenis: String(i.Jenis || 'Kesehatan'),
-        frek: String(i.Frekuensi || 'Bulanan'), satuan: String(i.Satuan || ''), ket: ketDari_(i), target: target, arah: arah,
+        frek: String(i.Frekuensi || 'Bulanan'), satuan: String(i.Satuan || ''), ket: ketDari_(i), unggulan: String(i.Unggulan).toLowerCase() === 'ya', target: target, arah: arah,
         pic: String(i.PIC || pic.Username || ''), pics: ditugaskan, program: String(i.Program || ''), programNama: prog ? String(prog.Nama) : '', sub: prog ? String(prog.Sub || '') : '', tgtP: tgtMap[String(i.ID)] || {}, nBukti: buktiN[String(i.ID)] || 0, picNama: pic.Nama ? String(pic.Nama) : '', picTelp: pic.Telepon ? String(pic.Telepon) : '', picEmail: pic.Email ? String(pic.Email) : '',
         due: due, cells: cells, series: series, missing: missing, status: status,
         realisasi: realisasi, realBulan: last ? last.b : null, capaian: capaian, tier: tierDari_(capaian),
@@ -969,6 +1007,78 @@ function apiHapusKegiatan(token, id) {
   });
 }
 
+/* ---------------- Monev SPBE (28 indikator, tingkat kematangan 1-5 per triwulan) ---------------- */
+
+const SPBE_GRUP = [
+  { id: 'tata', nama: 'Tata kelola SPBE', dari: 1, sampai: 5 },
+  { id: 'infra', nama: 'Infrastruktur terpusat', dari: 6, sampai: 8 },
+  { id: 'manaj', nama: 'Manajemen SPBE', dari: 9, sampai: 15 },
+  { id: 'adm', nama: 'Layanan administrasi pemerintahan', dari: 16, sampai: 25 },
+  { id: 'publik', nama: 'Layanan publik', dari: 26, sampai: 28 }
+];
+const SPBE_NAMA = [
+  'Arsitektur SPBE OPD', 'Perencanaan dan Penganggaran SPBE OPD', 'Proses Bisnis OPD', 'Pembangunan Aplikasi Layanan OPD', 'Tim Pengelola SPBE OPD',
+  'Pemanfaatan Layanan Pusat Data Internal', 'Penggunaan Infrastruktur TIK, virtual meeting dan internet terpusat', 'Penggunaan SPLPD',
+  'Penerapan Manajemen Risiko SPBE', 'Penerapan Manajemen Keamanan Informasi SPBE', 'Penerapan Manajemen Data', 'Penerapan Manajemen Aset TIK',
+  'Penerapan Manajemen Sumber Daya Manusia TIK', 'Penerapan Manajemen Pengetahuan SPBE', 'Penerapan Manajemen Layanan SPBE',
+  'Pemanfaatan Aplikasi Perencanaan', 'Pemanfaatan Aplikasi Penganggaran', 'Pemanfaatan Aplikasi Pengadaan Barang dan Jasa', 'Pemanfaatan Aplikasi Kepegawaian',
+  'Pemanfaatan Aplikasi Kearsipan Dinamis', 'Pemanfaatan Aplikasi Akuntabilitas Kinerja Organisasi', 'Pemanfaatan Aplikasi Kinerja Pegawai',
+  'Pemanfaatan Aplikasi Penatausahaan Keuangan', 'Pemanfaatan Aplikasi Pengaduan Layanan Publik', 'Pemanfaatan Aplikasi Data Terbuka',
+  'Pemberian Layanan Informasi melalui Website', 'Pemberian Layanan Informasi melalui Media Sosial', 'Pemberian Layanan Berbasis Aplikasi Online'
+];
+const SPBE_TARGET_DASAR = 3;
+
+function spbeGrupDari_(no) {
+  for (let i = 0; i < SPBE_GRUP.length; i++) if (no >= SPBE_GRUP[i].dari && no <= SPBE_GRUP[i].sampai) return SPBE_GRUP[i].id;
+  return SPBE_GRUP[0].id;
+}
+/** Data Monev SPBE satu tahun: 28 indikator x 4 triwulan, lengkap dengan level, target, catatan dan bukti. */
+function spbeData_(tahun) {
+  const peta = {};
+  readTable_(SHEET.SPBE).forEach(r => { if (Number(r.Tahun) === Number(tahun)) peta[Number(r.Triwulan) + '|' + Number(r.No)] = r; });
+  return SPBE_NAMA.map((nama, k) => {
+    const no = k + 1;
+    const tw = [1, 2, 3, 4].map(q => {
+      const r = peta[q + '|' + no];
+      const lv = r && r.Level !== '' && r.Level !== null ? Number(r.Level) : null;
+      return {
+        level: lv >= 1 && lv <= 5 ? lv : null, target: r && Number(r.Target) >= 1 ? Number(r.Target) : null,
+        catatan: r ? String(r.Catatan || '') : '', bukti: r ? String(r.Bukti || '') : '', oleh: r ? String(r.DiisiOleh || '') : '', pada: r ? String(r.DiisiPada || '') : ''
+      };
+    });
+    let tgt = SPBE_TARGET_DASAR;
+    for (let q = 3; q >= 0; q--) if (tw[q].target) { tgt = tw[q].target; break; }
+    return { no: no, nama: nama, grup: spbeGrupDari_(no), tw: tw, target: tgt };
+  });
+}
+function apiSimpanSpbe(token, p) {
+  return run_(() => {
+    const user = auth_(token, ['admin']);
+    p = p || {};
+    const tahun = Number(p.tahun), tw = Number(p.triwulan), no = Number(p.no);
+    if (!(tahun >= 2020 && tahun <= 2100)) throw new Error('Tahun tidak valid.');
+    if ([1, 2, 3, 4].indexOf(tw) < 0) throw new Error('Triwulan harus 1 sampai 4.');
+    if (!(no >= 1 && no <= SPBE_NAMA.length) || no !== Math.floor(no)) throw new Error('Nomor indikator tidak dikenal.');
+    const lvRaw = String(p.level === undefined || p.level === null ? '' : p.level).trim();
+    let level = '';
+    if (lvRaw !== '') {
+      level = Number(lvRaw);
+      if (!(level >= 1 && level <= 5) || level !== Math.floor(level)) throw new Error('Level harus bilangan 1 sampai 5.');
+    }
+    const target = Number(p.target || SPBE_TARGET_DASAR);
+    if (!(target >= 1 && target <= 5) || target !== Math.floor(target)) throw new Error('Target harus bilangan 1 sampai 5.');
+    const bukti = String(p.bukti || '').trim().slice(0, 300);
+    if (bukti && !/^https?:\/\/[^\s]+$/i.test(bukti)) throw new Error('Tautan bukti harus diawali http:// atau https://');
+    const kunci = tahun + '|' + tw + '|' + no;
+    const hasil = upsertRow_(SHEET.SPBE, o => String(o.Kunci) === kunci, {
+      Kunci: kunci, Tahun: tahun, Triwulan: tw, No: no, Level: level, Target: target, Catatan: bersih_(p.catatan, 500), Bukti: bukti,
+      DiisiOleh: user.nama, DiisiPada: nowStr_()
+    });
+    catatLog_('spbe', user.username, 'SPBE ' + kunci + ' level ' + (level === '' ? '-' : level));
+    return { hasil: hasil };
+  });
+}
+
 /* ---------------- Aksi: pengaturan (admin) ---------------- */
 
 function apiSimpanConfig(token, p) {
@@ -1045,7 +1155,8 @@ function apiSimpanIndikator(token, p) {
     }
     const hasil = upsertRow_(SHEET.INDIKATOR, o => String(o.ID) === id, {
       ID: id, Nama: nama, Bidang: p.bidang, Jenis: p.jenis, Frekuensi: p.frekuensi, Satuan: bersih_(p.satuan, 20),
-      Target: target, Arah: p.arah === 'Turun' ? 'Turun' : 'Naik', PIC: pic, Aktif: p.aktif === false ? 'Tidak' : 'Ya', Program: prog
+      Target: target, Arah: p.arah === 'Turun' ? 'Turun' : 'Naik', PIC: pic, Aktif: p.aktif === false ? 'Tidak' : 'Ya', Program: prog,
+      Unggulan: (p.unggulan === 'Ya' || p.unggulan === true || p.unggulan === 'on') ? 'Ya' : 'Tidak'
     });
     catatLog_('indikator', user.username, (hasil === 'insert' ? 'Menambah ' : 'Mengubah ') + id);
     return { hasil: hasil, id: id };

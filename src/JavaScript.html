@@ -14,11 +14,9 @@
     { id: 'beranda', label: 'Beranda', icon: 'dashboard', group: 'Utama' },
     { id: 'inputdata', label: 'Input Data', icon: 'edit_note', group: 'Indikator', roles: ['admin', 'pic'] },
     { id: 'indikator', label: 'Indikator Kesehatan', icon: 'monitor_heart', group: 'Indikator' },
-    { id: 'iku', label: 'IKU', icon: 'flag', group: 'Indikator' },
+    { id: 'spbe', label: 'Monev SPBE', icon: 'lan', group: 'Indikator' },
     { id: 'monev', label: 'Monev Kinerja', icon: 'rule', group: 'Indikator' },
     { id: 'analitik', label: 'Capaian & Analitik', icon: 'insights', group: 'Analisis' },
-    { id: 'monitoring', label: 'Monitoring Pengisian', icon: 'fact_check', group: 'Analisis', badge: true },
-    { id: 'rekomendasi', label: 'Permasalahan & Rekomendasi', icon: 'lightbulb', group: 'Analisis' },
     { id: 'laporan', label: 'Laporan Eksekutif', icon: 'description', group: 'Layanan', roles: ['admin', 'pimpinan'] },
     { id: 'permintaan', label: 'Permintaan Data', icon: 'upload_file', group: 'Layanan' },
     { id: 'tambahindikator', label: 'Tambah Indikator', icon: 'add_circle', group: 'Administrasi', roles: ['admin'] },
@@ -29,8 +27,8 @@
   var BOTTOM = [
     { id: 'beranda', label: 'Beranda', icon: 'dashboard' },
     { id: 'indikator', label: 'Indikator', icon: 'monitor_heart' },
-    { id: 'monitoring', label: 'Monitoring', icon: 'fact_check' },
-    { id: 'rekomendasi', label: 'Rekomendasi', icon: 'lightbulb' },
+    { id: 'spbe', label: 'Monev SPBE', icon: 'lan' },
+    { id: 'permintaan', label: 'Data', icon: 'upload_file' },
     { id: '_menu', label: 'Menu', icon: 'menu' }
   ];
   var EMBLEM_SVG = '<svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><circle cx="16" cy="16" r="13.2" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="1.4"/><path d="M13 7h6v6h6v6h-6v6h-6v-6H7v-6h6z" fill="#fff"/></svg>';
@@ -425,12 +423,27 @@
   }
   /* ---------- tampilan Input Data: grid / list ---------- */
   function applyImLayout(v) {
-    var bar = $('.view-toggle'); if (!bar) return;
+    var bar = $('.im-bar .view-toggle'); if (!bar || !$('.im-grid')) return;
     if (!v) { try { v = localStorage.getItem('dkppkb_im_layout'); } catch (e) { } }
     v = v === 'list' ? 'list' : 'grid';
     var g = $('.im-grid'); if (g) g.classList.toggle('im-list', v === 'list');
     $$('.vt-btn', bar).forEach(function (b) { var on = b.getAttribute('data-v') === v; b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
   }
+  /* ---------- accordion indikator (Input Data, Monev SPBE) ---------- */
+  var ACC = {};
+  function accBuka(art, on, tab) {
+    var head = $('.acc-head', art), body = $('.acc-body', art); if (!head || !body) return;
+    body.hidden = !on; head.setAttribute('aria-expanded', on ? 'true' : 'false'); art.classList.toggle('is-open', !!on);
+    var id = art.getAttribute('data-acc');
+    if (on) { ACC[id] = ACC[id] || 'cap'; accTab(art, tab || ACC[id]); } else delete ACC[id];
+  }
+  function accTab(art, tab) {
+    var id = art.getAttribute('data-acc'); tab = tab || 'cap';
+    $$('.acc-pane', art).forEach(function (p) { p.hidden = p.getAttribute('data-pane') !== tab; });
+    $$('.acc-tabs .vt-btn', art).forEach(function (b) { var on = b.getAttribute('data-tab') === tab; b.classList.toggle('is-on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+    if (ACC[id] !== undefined) ACC[id] = tab;
+  }
+  function accPulih() { Object.keys(ACC).forEach(function (id) { var art = $('.im-acc[data-acc="' + id + '"]'); if (art) accBuka(art, true, ACC[id]); else delete ACC[id]; }); }
   function injectPage(page, html, title, opts) {
     var keepY = opts && opts.keep ? window.scrollY : 0;
     $('#app-container').innerHTML = html;
@@ -441,6 +454,7 @@
     window.scrollTo(0, keepY);
     if (!(opts && opts.keep)) { try { $('#main').focus({ preventScroll: true }); } catch (e) { } }
     applyImLayout();
+    if (opts && opts.keep) accPulih(); else ACC = {};
     var fib = $('#form-ind-baru'); if (fib) syncIndBaru(fib);
     var ftk = $('#form-tarik'); if (ftk) syncTarik(ftk);
     if (page === 'pengguna' && AppState.params && AppState.params.tambah) { delete AppState.params.tambah; openUserForm({}); }
@@ -1004,6 +1018,9 @@
     var act = el.getAttribute('data-act');
     switch (act) {
       case 'close-modal': closeModal(); break;
+      case 'acc': { var ar = el.closest('.im-acc'); if (ar) accBuka(ar, el.getAttribute('aria-expanded') !== 'true'); break; }
+      case 'acc-tab': { var at = el.closest('.im-acc'); if (at) accTab(at, el.getAttribute('data-tab')); break; }
+      case 'acc-all': { var on = el.getAttribute('data-v') === '1'; $$('.im-acc').forEach(function (a) { accBuka(a, on); }); break; }
       case 'theme': window.DkTheme.next(); break;
       case 'reload': navigateTo(AppState.page, AppState.params); break;
       case 'open-drawer': openDrawer(); break;
@@ -1262,7 +1279,7 @@
     applyFavicon(document.documentElement.getAttribute('data-logo'));
     applyLogo(document.documentElement.getAttribute('data-logo'));
     $('#btn-menu').addEventListener('click', openDrawer);
-    $('#btn-notif').addEventListener('click', function () { navigateTo('monitoring', {}); });
+    $('#btn-notif').addEventListener('click', function () { navigateTo('beranda', {}); });
     $('#btn-user').addEventListener('click', function () {
       var u = AppState.user; if (!u) return;
       openModal('Akun Saya',
@@ -1285,8 +1302,21 @@
         try { localStorage.setItem('dkppkb_merek', JSON.stringify(r.data)); } catch (e) { }
       }).catch(function () { });
       var tk = null; try { tk = sessionStorage.getItem(SESI_KEY); } catch (e) { }
-      if (tk) { AppState.sessionToken = tk; startApp().catch(function () { AppState.sessionToken = null; simpanSesi(null); showLogin(''); }); }
+      if (tk) pulihSesi(tk);
     }
+  }
+  /** Pulihkan sesi setelah refresh: tampilkan pemuat (bukan halaman login), ulangi bila koneksi lambat, dan hanya keluar bila server menyatakan sesi habis. */
+  function pulihSesi(tk, coba) {
+    coba = coba || 0;
+    AppState.sessionToken = tk;
+    if (!coba) { show($('#view-login'), false); busy(true); }
+    startApp().then(function () { busy(false); }).catch(function (e) {
+      if (e && e.handled) { busy(false); return; }        // sesi benar-benar habis: forceLogout sudah menampilkan login
+      if (coba < 3) { setTimeout(function () { pulihSesi(tk, coba + 1); }, 1500 * (coba + 1)); return; }
+      busy(false);
+      AppState.sessionToken = null;                        // sesi tetap tersimpan: refresh berikutnya mencoba lagi
+      showLogin('Koneksi ke server lambat atau terputus. Muat ulang halaman, sesi Anda masih tersimpan.');
+    });
   }
   function refreshBadgeForPeriod() { /* lencana mengikuti bulan aktif konfigurasi; tidak berubah saat pratinjau periode */ }
 

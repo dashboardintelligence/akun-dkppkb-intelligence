@@ -208,13 +208,16 @@ function pageBeranda_(m, user, params, ctx) {
     '<h2 class="hero-title">Kepatuhan Pengisian Data</h2><p class="hero-sub">Indikator wajib lapor sampai ' + esc_(m.periodeLabel) + ' yang sudah terinput.</p>' +
     '<div class="hero-pct">' + esc_(num_(k.pctInput, 1)) + '<small>%</small></div>' + bar_(k.pctInput, k.pctInput >= 100 ? 'tercapai' : (k.pctInput >= 80 ? 'waspada' : 'kritis')) +
     '<div class="hero-stats"><span><b>' + (k.lengkap + k.menunggu) + '</b> dari ' + k.wajib + ' indikator masuk</span><span><b>' + k.menunggu + '</b> menunggu verifikasi</span><span><b>' + k.menunggak + '</b> tertunggak</span></div></div>' +
-    '<div class="hero-r"><button type="button" class="btn btn-primary" data-nav="monitoring">' + ic_('fact_check') + 'Buka Monitoring</button></div></section>';
+    '<div class="hero-r"><button type="button" class="btn btn-primary" data-nav="monitoring">' + ic_('fact_check') + 'Monitoring Lengkap</button></div></section>';
 
   h += '<section class="grid g4" aria-label="Ringkasan status">' +
     kpiCard_('Total Indikator', String(k.total), 'Aktif dipantau', 'info', 'monitoring', {}) +
     kpiCard_('Tercapai', String(k.tercapai), k.total ? num_(k.tercapai / k.total * 100, 0) + '% dari total' : '—', 'ok', 'task_alt', { tier: 'tercapai' }) +
     kpiCard_('Waspada', String(k.waspada), 'Capaian 80–99%', 'warn', 'warning', { tier: 'waspada' }) +
     kpiCard_('Kritis', String(k.kritis), 'Capaian di bawah 80%', 'crit', 'error', { tier: 'kritis' }) + '</section>';
+
+  h += sekPopuler_(m, user);
+  h += sekMonitoringBeranda_(m, user, ctx);
 
   h += '<h2 class="h2">Capaian per Bidang</h2><section class="grid g3">';
   h += m.bidang.map(b => '<button type="button" class="card bidang" data-nav="indikator" data-params=\'' + esc_(JSON.stringify({ bidang: b.nama })) + '\'>' +
@@ -439,7 +442,6 @@ function pageIndikatorGen_(judul, sub, jenis, m, user, params, ctx, rute) {
   return h;
 }
 function pageIndikator_(m, u, p, c) { return pageIndikatorGen_('Indikator Kesehatan', 'Seluruh indikator yang dipantau Dinas — lihat daftar, pencapaian terhadap target, atau capaian per periode.', '', m, u, p, c, 'indikator'); }
-function pageIku_(m, u, p, c) { return pageIndikatorGen_('Indikator Kinerja Utama (IKU)', 'Indikator kinerja utama perangkat daerah.', 'IKU', m, u, p, c, 'iku'); }
 
 /* ---------------- Halaman: Capaian & Analitik ---------------- */
 
@@ -655,7 +657,126 @@ function pageLaporan_(m, user) {
     '<section class="card card-pad"><style>' + RPT_CSS + '</style>' + laporanBody_(m) + '</section>';
 }
 
-/* ---------------- Halaman: Input Data (per indikator, sesuai tanggung jawab PIC) ---------------- */
+/* ---------------- Grafik mini & analisis bulanan per indikator ---------------- */
+
+function capaiTgt_(i, v) { return i.arah === 'Turun' ? v <= i.target : v >= i.target; }
+
+/** Batang kecil 12 bulan (kepala accordion & kartu Beranda). Biru = memenuhi target, biru muda = belum. */
+function miniBatang_(i, w, h, garis) {
+  const vals = i.series.filter(v => v !== null && v !== undefined);
+  const mx = Math.max(i.target || 0, vals.length ? Math.max.apply(null, vals) : 0, 1) * 1.1, bw = w / 12;
+  let s = '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '" width="' + w + '" height="' + h + '" role="img" aria-label="Capaian bulanan ' + esc_(i.nama) + '">';
+  i.series.forEach((v, k) => {
+    if (v === null || v === undefined) { s += '<rect class="sp-empty" x="' + (k * bw + bw * 0.2) + '" y="' + (h - 2) + '" width="' + (bw * 0.6) + '" height="2" rx="1"/>'; return; }
+    const bh = Math.max(2, (h - 2) * v / mx);
+    s += '<rect class="' + (capaiTgt_(i, v) ? 'sp-ok' : 'sp-lo') + '" x="' + (k * bw + bw * 0.15) + '" y="' + (h - bh) + '" width="' + (bw * 0.7) + '" height="' + bh + '" rx="1.5"/>';
+  });
+  if (garis && i.target > 0) { const y = h - (h - 2) * i.target / mx; s += '<line class="sp-tg" x1="0" x2="' + w + '" y1="' + y + '" y2="' + y + '"/>'; }
+  return s + '</svg>';
+}
+
+/** Grafik capaian bulanan besar. Batang bisa ditekan (bila boleh) untuk mengisi / mengubah bulan itu. */
+function grafikBulan_(i, ctx, bisa, bulan) {
+  const W = 460, H = 170, L = 38, R = 8, T = 14, B = 24, pw = W - L - R, ph = H - T - B, bw = pw / 12;
+  const vals = i.series.filter(v => v !== null && v !== undefined);
+  const mx = Math.max(i.target || 0, vals.length ? Math.max.apply(null, vals) : 0, 1) * 1.15;
+  const yv = v => T + ph - ph * v / mx;
+  let s = '<svg class="gb" viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Capaian bulanan ' + esc_(i.nama) + ' dibanding target">';
+  [0, 0.5, 1].forEach(f => { const v = mx / 1.15 * f; s += '<line class="gb-gr" x1="' + L + '" x2="' + (W - R) + '" y1="' + yv(v) + '" y2="' + yv(v) + '"/><text class="gb-tx" x="' + (L - 6) + '" y="' + (yv(v) + 4) + '" text-anchor="end" font-size="10">' + num_(v, v >= 100 ? 0 : 1) + '</text>'; });
+  for (let b = 1; b <= 12; b++) {
+    const v = i.series[b - 1], c = i.cells[b - 1], x = L + bw * (b - 1), bx = x + bw * 0.18, bwid = bw * 0.64;
+    if (v !== null && v !== undefined) {
+      const y = yv(v);
+      s += '<rect class="' + (capaiTgt_(i, v) ? 'gb-ok' : 'gb-lo') + (c === 'wait' ? ' gb-wait' : '') + '" x="' + bx + '" y="' + y + '" width="' + bwid + '" height="' + Math.max(1, T + ph - y) + '" rx="3"><title>' + esc_(BULAN[b - 1] + ': ' + val_(v, i.satuan) + (c === 'wait' ? ' (menunggu verifikasi)' : '')) + '</title></rect>';
+      if (bw > 26) s += '<text class="gb-val" x="' + (x + bw / 2) + '" y="' + (y - 4) + '" text-anchor="middle" font-size="9.5" font-weight="700">' + num_(v, v >= 100 ? 0 : 1) + '</text>';
+    } else if (c === 'miss') {
+      s += '<rect class="gb-miss" x="' + bx + '" y="' + (T + ph - 4) + '" width="' + bwid + '" height="4" rx="2"><title>' + esc_(BULAN[b - 1] + ': belum diisi') + '</title></rect>';
+    }
+    s += '<text class="gb-tx" x="' + (x + bw / 2) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10">' + BULAN_S[b - 1].charAt(0) + '</text>';
+    if (bisa && (c === 'ok' || c === 'wait' || c === 'miss')) s += '<rect class="gb-hit" x="' + x + '" y="' + T + '" width="' + bw + '" height="' + (ph + B - 4) + '" ' + isiAttr_(i, b, ctx) + ' role="button" tabindex="0" aria-label="' + esc_(i.nama + ' ' + BULAN[b - 1] + ': tekan untuk mengisi') + '"></rect>';
+  }
+  if (i.target > 0) s += '<line class="gb-tg" x1="' + L + '" x2="' + (W - R) + '" y1="' + yv(i.target) + '" y2="' + yv(i.target) + '"/><text class="gb-tgt" x="' + (W - R) + '" y="' + (yv(i.target) - 4) + '" text-anchor="end" font-size="10" font-weight="700">Target ' + esc_(num_(i.target, i.target >= 100 ? 0 : 1)) + '</text>';
+  return s + '</svg>';
+}
+
+/** Analisis otomatis dari seri realisasi bulanan: rata-rata, tren, terbaik/terendah, proyeksi akhir tahun, kelengkapan, saran. */
+function analisisInd_(i, bulan) {
+  const naik = i.arah !== 'Turun';
+  const pts = [];
+  for (let b = 1; b <= bulan; b++) { const v = i.series[b - 1]; if (v !== null && v !== undefined) pts.push({ b: b, v: v }); }
+  const dueN = i.due.filter(b => b <= bulan).length;
+  const a = { n: pts.length, due: dueN, lengkap: dueN ? Math.round(pts.length / dueN * 100) : null, saran: [] };
+  if (pts.length) {
+    a.rata = pts.reduce((x, p) => x + p.v, 0) / pts.length;
+    a.terbaik = pts.reduce((m, p) => ((naik ? p.v > m.v : p.v < m.v) ? p : m), pts[0]);
+    a.terendah = pts.reduce((m, p) => ((naik ? p.v < m.v : p.v > m.v) ? p : m), pts[0]);
+    const last = pts[pts.length - 1];
+    a.last = last;
+    a.selisih = last.v - i.target;
+    a.capai = capaiTgt_(i, last.v);
+    if (pts.length >= 2) {
+      const pr = pts[pts.length - 2];
+      a.delta = last.v - pr.v;
+      a.tren = Math.abs(a.delta) < 1e-9 ? 'stabil' : ((a.delta > 0) === naik ? 'membaik' : 'memburuk');
+    }
+    if (pts.length >= 3) {
+      const t = pts.slice(-4), n = t.length;
+      const mx = t.reduce((s, p) => s + p.b, 0) / n, my = t.reduce((s, p) => s + p.v, 0) / n;
+      let sxy = 0, sxx = 0;
+      t.forEach(p => { sxy += (p.b - mx) * (p.v - my); sxx += (p.b - mx) * (p.b - mx); });
+      let pr = my + (sxx ? sxy / sxx : 0) * (12 - mx);
+      pr = Math.max(0, pr);
+      if (i.satuan === '%') pr = Math.min(100, pr);
+      a.proyeksi = pr;
+      a.proyCapai = capaiTgt_(i, pr);
+    }
+    if (a.capai && a.tren !== 'memburuk') a.saran.push('Capaian terakhir sudah memenuhi target. Pertahankan pola kerja dan dokumentasikan praktik baiknya.');
+    if (a.capai && a.tren === 'memburuk') a.saran.push('Masih memenuhi target tetapi menurun dari bulan lalu. Waspadai sebelum jatuh di bawah target.');
+    if (!a.capai && a.tren === 'memburuk') a.saran.push('Di bawah target dan terus memburuk. Telusuri penyebabnya lalu catat di tab Permasalahan & Rekomendasi.');
+    if (!a.capai && a.tren !== 'memburuk') a.saran.push('Belum memenuhi target. Susun tindak lanjut agar selisih ' + num_(Math.abs(a.selisih), 1) + ' ' + i.satuan + ' dapat ditutup.');
+    if (a.proyeksi !== undefined && !a.proyCapai) a.saran.push('Dengan tren 3–4 bulan terakhir, perkiraan Desember ' + num_(a.proyeksi, 1) + ' ' + i.satuan + ' belum mencapai target ' + num_(i.target, 1) + '.');
+  } else a.saran.push('Belum ada realisasi tercatat. Isi bulan yang sudah jatuh tempo agar analisis dapat dibuat.');
+  const miss = i.missing || [];
+  if (miss.length) a.saran.push('Bulan belum diisi: ' + miss.map(b => BULAN_S[b - 1]).join(', ') + '. Lengkapi dahulu agar tren tidak menyesatkan.');
+  return a;
+}
+
+function analisisGrid_(i, a) {
+  const sat = i.satuan ? ' ' + i.satuan : '';
+  const sel = (t, v, s) => '<div class="an-c"><span class="muted sm">' + t + '</span><b>' + v + '</b>' + (s ? '<span class="muted sm">' + s + '</span>' : '') + '</div>';
+  if (!a.n) return '<div class="an-grid">' + sel('Kelengkapan isian', a.lengkap === null ? '—' : a.lengkap + '%', '0 dari ' + a.due + ' bulan') + '</div>';
+  const trenTxt = a.tren === undefined ? '—' : (a.tren === 'stabil' ? 'Stabil' : a.tren === 'membaik' ? 'Membaik' : 'Memburuk');
+  return '<div class="an-grid">' +
+    sel('Rata-rata tahun ini', esc_(num_(a.rata, 1)) + sat, a.n + ' bulan terisi') +
+    sel('Tren bulan terakhir', a.tren === undefined ? '—' : chip_(a.tren === 'memburuk' ? 'crit' : (a.tren === 'membaik' ? 'ok' : 'mute'), trenTxt), a.delta === undefined ? '' : (a.delta > 0 ? '+' : '') + esc_(num_(a.delta, 1)) + sat + ' dari bulan lalu') +
+    sel('Selisih ke target', (a.selisih > 0 ? '+' : '') + esc_(num_(a.selisih, 1)) + sat, a.capai ? 'Memenuhi target' : 'Belum memenuhi') +
+    sel(i.arah === 'Turun' ? 'Bulan terendah (terbaik)' : 'Bulan terbaik', esc_(BULAN_S[a.terbaik.b - 1]) + ' · ' + esc_(num_(a.terbaik.v, 1)), '') +
+    sel(i.arah === 'Turun' ? 'Bulan tertinggi (terburuk)' : 'Bulan terendah', esc_(BULAN_S[a.terendah.b - 1]) + ' · ' + esc_(num_(a.terendah.v, 1)), '') +
+    sel('Perkiraan Desember', a.proyeksi === undefined ? '—' : esc_(num_(a.proyeksi, 1)) + sat, a.proyeksi === undefined ? 'Butuh minimal 3 bulan data' : (a.proyCapai ? 'Diperkirakan memenuhi target' : 'Diperkirakan di bawah target')) +
+    sel('Kelengkapan isian', a.lengkap === null ? '—' : a.lengkap + '%', a.n + ' dari ' + a.due + ' bulan jatuh tempo') + '</div>';
+}
+
+function panelMasalah_(i, user, daftar) {
+  const bisaUbah = x => user.role === 'admin' || (user.role === 'pic' && x.Bidang === user.bidang);
+  const urut = { Tinggi: 0, Sedang: 1, Rendah: 2 };
+  const li = daftar.slice().sort((x, y) => (x.Status === 'Selesai') - (y.Status === 'Selesai') || (urut[x.Prioritas] - urut[y.Prioritas]) || String(y.Tanggal).localeCompare(String(x.Tanggal)));
+  let h = '';
+  if (i.tier === 'kritis' && !daftar.some(x => x.Status !== 'Selesai')) h += '<div class="batas-bar batas-warn" role="status"><b>Indikator ini berstatus Kritis dan belum punya catatan terbuka.</b> Tuliskan permasalahan dan rekomendasinya di bawah.</div>';
+  h += li.length ? '<div class="stack">' + li.map(x =>
+    '<div class="note note-' + (x.Prioritas === 'Tinggi' ? 'crit' : x.Prioritas === 'Sedang' ? 'warn' : 'info') + '"><div class="note-top">' + chip_(x.Prioritas === 'Tinggi' ? 'crit' : x.Prioritas === 'Sedang' ? 'warn' : 'info', 'Prioritas ' + x.Prioritas) + chip_(x.Status === 'Selesai' ? 'ok' : x.Status === 'Proses' ? 'info' : 'mute', x.Status) +
+    '<span class="muted sm">' + esc_(tglId_(x.Tanggal)) + ' · ' + esc_(x.DibuatOleh) + '</span></div><p>' + esc_(x.Permasalahan) + '</p>' +
+    (x.Rekomendasi ? '<p class="note-sol">' + ic_('lightbulb') + '<span>' + esc_(x.Rekomendasi) + '</span></p>' : '') +
+    (x.Penanggung || x.Tenggat ? '<div class="muted sm">' + (x.Penanggung ? 'Penanggung jawab: ' + esc_(x.Penanggung) : '') + (x.Tenggat ? ' · Tenggat ' + esc_(tglId_(x.Tenggat)) : '') + '</div>' : '') +
+    (bisaUbah(x) ? '<div class="note-actions">' + ['Terbuka', 'Proses', 'Selesai'].filter(st => st !== x.Status).map(st => '<button type="button" class="btn btn-ghost btn-sm" data-act="masalah-status" data-id="' + esc_(x.ID) + '" data-status="' + st + '">Tandai ' + st + '</button>').join('') + '</div>' : '') + '</div>').join('') + '</div>'
+    : '<p class="muted sm">Belum ada catatan untuk indikator ini.</p>';
+  h += '<form class="msl-form" data-api="apiSimpanMasalah" novalidate><input type="hidden" name="indikatorId" value="' + esc_(i.id) + '"><input type="hidden" name="bidang" value="' + esc_(i.bidang) + '">' +
+    '<h4 class="h3">Tambah permasalahan &amp; rekomendasi</h4><div class="form-grid">' + select_('Prioritas', 'prioritas', ['Tinggi', 'Sedang', 'Rendah'], 'Sedang') + field_('Penanggung jawab tindak lanjut', 'penanggung', 'text', '', 'maxlength="80"') + field_('Tenggat (opsional)', 'tenggat', 'date', '') + '</div>' +
+    field_('Permasalahan', 'permasalahan', 'textarea', '', 'required maxlength="1000" rows="3"') + field_('Rekomendasi / usulan kegiatan', 'rekomendasi', 'textarea', '', 'maxlength="1000" rows="3"') +
+    '<div class="form-actions"><button class="btn btn-primary" type="submit">Simpan Catatan</button></div><p class="form-msg" role="alert"></p></form>';
+  return h;
+}
+
+/* ---------------- Halaman: Input Data (accordion per indikator: grafik, analisis, permasalahan & rekomendasi) ---------------- */
 
 function pageInputData_(m, user, params, ctx) {
   const adm = user.role === 'admin';
@@ -670,7 +791,10 @@ function pageInputData_(m, user, params, ctx) {
   else if (fs === 'menunggu') li = li.filter(menunggu);
   li.sort((a, b) => a.bidang.localeCompare(b.bidang) || a.programNama.localeCompare(b.programNama) || a.id.localeCompare(b.id));
 
-  let h = pageHead_('Input Data', adm ? 'Isi realisasi per indikator untuk semua bidang. Tekan bulan untuk mengisi.' : 'Isi realisasi untuk indikator yang menjadi tanggung jawab Anda. Tekan bulan untuk mengisi.', '');
+  const masalahPer = {};
+  readTable_(SHEET.MASALAH).forEach(x => { if (x.IndikatorID) (masalahPer[String(x.IndikatorID)] = masalahPer[String(x.IndikatorID)] || []).push(x); });
+
+  let h = pageHead_('Input Data', adm ? 'Isi realisasi per indikator untuk semua bidang. Buka indikator untuk melihat grafik, analisis bulanan, serta mencatat permasalahan dan rekomendasi.' : 'Isi realisasi untuk indikator yang menjadi tanggung jawab Anda. Buka indikator untuk melihat grafik, analisis, dan mencatat permasalahan.', '');
   const sb = statusBatas_(m.cfg), nPerlu = semua.filter(perlu).length;
   if (sb && nPerlu) {
     const tone = sb.terlambat ? 'crit' : sb.sisa <= 3 ? 'warn' : 'info';
@@ -683,25 +807,41 @@ function pageInputData_(m, user, params, ctx) {
     kpiCard_('Lengkap', String(semua.filter(i => i.status === 'lengkap').length), 'Seluruh bulan jatuh tempo terisi', 'ok', 'verified') + '</section>';
   h += '<div class="filters card card-flat"><label class="search"><span class="sr">Cari indikator</span>' + ic_('search') + '<input type="search" class="input input-search f-param" data-param="q" value="' + esc_(params.q || '') + '" placeholder="Cari nama, ID, atau program" maxlength="60"></label>' +
     filterSel_('Status', 'status', [{ v: '', t: 'Semua indikator' }, { v: 'perlu', t: 'Perlu diisi' }, { v: 'menunggu', t: 'Menunggu verifikasi' }], fs) +
-    (adm ? filterSel_('Bidang', 'bidang', [{ v: '', t: 'Semua bidang' }].concat(m.bidang.map(b => ({ v: b.nama, t: b.nama }))), fb) : '') + '</div>';
-  h += '<div class="im-bar"><div class="legend legend-heat"><span><i class="hc hc-ok"></i>Lengkap</span><span><i class="hc hc-wait"></i>Menunggu verifikasi</span><span><i class="hc hc-miss"></i>Belum diisi</span><span><i class="hc hc-future"></i>Belum jatuh tempo</span></div>' +
-    '<div class="view-toggle" role="group" aria-label="Tampilan daftar indikator"><button type="button" class="vt-btn is-on" data-act="im-layout" data-v="grid" aria-pressed="true">' + ic_('grid_view') + '<span>Grid</span></button>' +
-    '<button type="button" class="vt-btn" data-act="im-layout" data-v="list" aria-pressed="false">' + ic_('view_list') + '<span>List</span></button></div></div>';
+    (adm ? filterSel_('Bidang', 'bidang', [{ v: '', t: 'Semua bidang' }].concat(m.bidang.map(b => ({ v: b.nama, t: b.nama }))), fb) : '') +
+    '<div class="acc-tools"><button type="button" class="btn btn-ghost btn-sm" data-act="acc-all" data-v="1">Buka semua</button><button type="button" class="btn btn-ghost btn-sm" data-act="acc-all" data-v="0">Tutup semua</button></div></div>';
+  h += '<div class="im-bar"><div class="legend legend-heat"><span><i class="gx-sw sw-ok"></i>Memenuhi target</span><span><i class="gx-sw sw-lo"></i>Belum memenuhi</span><span><i class="gx-sw sw-miss"></i>Belum diisi</span><span><i class="gx-sw sw-tg"></i>Garis target</span></div></div>';
   if (!li.length) return h + '<section class="card card-pad">' + kosong_(semua.length ? 'Tidak ada indikator yang cocok dengan filter.' : 'Belum ada indikator yang ditugaskan kepada Anda. Hubungi admin.', 'inbox') + '</section>';
-  h += '<div class="im-grid">' + li.map(i => {
-    const lbl = { ok: 'Lengkap', wait: 'Menunggu verifikasi', miss: 'Belum diisi', future: 'Belum jatuh tempo', na: 'Tidak wajib' };
+
+  const lbl = { ok: 'Lengkap', wait: 'Menunggu verifikasi', miss: 'Belum diisi', future: 'Belum jatuh tempo', na: 'Tidak wajib' };
+  h += '<div class="acc-list">' + li.map(i => {
+    const a = analisisInd_(i, m.bulan), ms = masalahPer[i.id] || [], mBuka = ms.filter(x => x.Status !== 'Selesai').length;
     const strip = i.due.map(b => {
       const c = i.cells[b - 1], nama = BULAN_S[b - 1];
       return (c === 'miss' || c === 'ok' || c === 'wait')
         ? '<button type="button" class="im-m im-' + c + '" ' + isiAttr_(i, b, ctx) + ' aria-label="' + esc_(i.nama + ' ' + BULAN[b - 1] + ': ' + lbl[c] + '. Tekan untuk mengisi') + '">' + nama + '</button>'
         : '<span class="im-m im-future" aria-label="' + esc_(BULAN[b - 1] + ': ' + (lbl[c] || '')) + '">' + nama + '</span>';
     }).join('');
-    return '<article class="card card-pad im-card"><div class="im-top"><div class="im-id"><div class="ir-id">' + esc_(i.id) + ' · ' + esc_(i.bidang) + (i.programNama ? ' · ' + esc_(i.programNama) : '') + '</div>' +
-      '<h3 class="ir-name">' + esc_(i.nama) + '</h3><div class="muted sm">' + esc_(i.frek) + ' · target ' + (i.arah === 'Turun' ? '≤ ' : '≥ ') + esc_(val_(i.target, i.satuan)) + '</div></div>' +
-      '<div class="im-end">' + tierChip_(i.tier) + buktiBtn_(i) + '</div></div>' +
-      '<div class="muted sm">Realisasi terakhir <b>' + esc_(val_(i.realisasi, i.satuan)) + '</b>' + (i.realBulan ? ' per ' + BULAN[i.realBulan - 1] : '') + ' · capaian ' + esc_(pct_(i.capaian)) + '</div>' +
-      '<div class="im-strip" role="group" aria-label="Bulan pelaporan">' + strip + '</div></article>';
+    const stChip = i.missing.length ? chip_('crit', i.missing.length + ' bulan belum diisi') : (i.cells.indexOf('wait') >= 0 ? chip_('info', 'Menunggu verifikasi') : chip_('ok', 'Lengkap', false));
+    return '<article class="card im-acc" data-acc="' + esc_(i.id) + '">' +
+      '<button type="button" class="acc-head" data-act="acc" data-id="' + esc_(i.id) + '" aria-expanded="false" aria-controls="acc-' + esc_(i.id) + '">' +
+      '<span class="acc-id"><span class="ir-id">' + esc_(i.id) + ' · ' + esc_(i.bidang) + (i.programNama ? ' · ' + esc_(i.programNama) : '') + '</span><span class="ir-name">' + esc_(i.nama) + '</span>' +
+      '<span class="muted sm">' + esc_(i.frek) + ' · target ' + (i.arah === 'Turun' ? '≤ ' : '≥ ') + esc_(val_(i.target, i.satuan)) + '</span></span>' +
+      '<span class="acc-spark">' + miniBatang_(i, 96, 28, true) + '</span>' +
+      '<span class="acc-val"><b>' + esc_(val_(i.realisasi, i.satuan)) + '</b><span class="muted sm">' + (i.realBulan ? esc_(BULAN_S[i.realBulan - 1]) : 'belum ada') + '</span></span>' +
+      '<span class="acc-st">' + tierChip_(i.tier) + stChip + (mBuka ? chip_('warn', mBuka + ' catatan') : '') + '</span>' +
+      '<span class="ic acc-chev" aria-hidden="true">expand_more</span></button>' +
+      '<div class="acc-body" id="acc-' + esc_(i.id) + '" hidden>' +
+      '<div class="view-toggle acc-tabs" role="tablist" aria-label="Isi indikator">' +
+      '<button type="button" role="tab" class="vt-btn is-on" aria-selected="true" data-act="acc-tab" data-id="' + esc_(i.id) + '" data-tab="cap">' + ic_('monitoring') + '<span>Capaian &amp; analisis</span></button>' +
+      '<button type="button" role="tab" class="vt-btn" aria-selected="false" data-act="acc-tab" data-id="' + esc_(i.id) + '" data-tab="msl">' + ic_('forum') + '<span>Permasalahan &amp; rekomendasi' + (ms.length ? ' (' + ms.length + ')' : '') + '</span></button></div>' +
+      '<div class="acc-pane" data-pane="cap"><div class="acc-cols"><div class="acc-chart"><h4 class="h3">Capaian bulanan ' + m.tahun + '</h4><p class="muted sm">Tekan sebuah bulan pada grafik untuk mengisi atau mengubah realisasinya.</p>' + grafikBulan_(i, ctx, bisaIsi_(user, i), m.bulan) + '</div>' +
+      '<div class="acc-an"><h4 class="h3">Analisis otomatis</h4>' + analisisGrid_(i, a) + '</div></div>' +
+      '<div class="acc-saran"><h4 class="h3">' + ic_('lightbulb') + 'Saran tindak lanjut</h4><ul>' + a.saran.map(t => '<li>' + esc_(t) + '</li>').join('') + '</ul></div>' +
+      '<div class="acc-foot"><div class="im-strip" role="group" aria-label="Bulan pelaporan">' + strip + '</div>' + buktiBtn_(i) + '</div></div>' +
+      '<div class="acc-pane" data-pane="msl" hidden>' + panelMasalah_(i, user, ms) + '</div>' +
+      '</div></article>';
   }).join('') + '</div>';
+  h += '<p><button type="button" class="btn btn-ghost btn-sm" data-nav="rekomendasi">' + ic_('forum') + 'Lihat semua catatan lintas indikator</button></p>';
   return h;
 }
 
@@ -804,13 +944,13 @@ function pagePengaturan_(m, user, params, ctx) {
   h += '<section class="card card-pad"><div class="sec-top"><h2 class="h2 flat">Indikator</h2><button type="button" class="btn btn-ghost btn-sm" data-act="edit-ind" data-json="{}">' + ic_('add') + 'Tambah</button></div>' +
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>ID</th><th>Indikator</th><th>Bidang</th><th>Jenis</th><th>Frekuensi</th><th>Program</th><th class="r">Target</th><th></th></tr></thead><tbody>' +
     allInd.map(i => '<tr><td>' + esc_(i.ID) + '</td><td>' + esc_(i.Nama) + (String(i.Aktif).toLowerCase() === 'tidak' ? ' ' + chip_('mute', 'Nonaktif') : '') + '</td><td>' + esc_(i.Bidang) + '</td><td>' + esc_(i.Jenis) + '</td><td>' + esc_(i.Frekuensi) + '</td><td>' + (esc_((m.program.filter(p => p.id === String(i.Program))[0] || {}).nama) || '<span class="muted">—</span>') + '</td><td class="r">' + esc_(num_(i.Target)) + ' ' + esc_(i.Satuan) + '</td>' +
-      '<td class="r"><button type="button" class="btn btn-ghost btn-sm" data-act="edit-ind" data-json="' + esc_(JSON.stringify({ id: i.ID, nama: i.Nama, bidang: i.Bidang, jenis: i.Jenis, frekuensi: i.Frekuensi, satuan: i.Satuan, target: i.Target, arah: i.Arah, pic: i.PIC, program: i.Program || '', aktif: String(i.Aktif).toLowerCase() !== 'tidak' })) + '">Ubah</button></td></tr>').join('') + '</tbody></table></div>' +
+      '<td class="r"><button type="button" class="btn btn-ghost btn-sm" data-act="edit-ind" data-json="' + esc_(JSON.stringify({ id: i.ID, nama: i.Nama, bidang: i.Bidang, jenis: i.Jenis, frekuensi: i.Frekuensi, satuan: i.Satuan, target: i.Target, arah: i.Arah, pic: i.PIC, program: i.Program || '', aktif: String(i.Aktif).toLowerCase() !== 'tidak', unggulan: String(i.Unggulan).toLowerCase() === 'ya' ? 'Ya' : 'Tidak' })) + '">Ubah</button></td></tr>').join('') + '</tbody></table></div>' +
     '<form id="form-indikator" class="form-card sub-form" data-api="apiSimpanIndikator" hidden novalidate><h3 class="h3">Form Indikator</h3><div class="form-grid">' +
     field_('ID', 'id', 'text', '', 'required maxlength="20"') + select_('Bidang', 'bidang', m.bidang.map(b => b.nama), '') + select_('Jenis', 'jenis', ENUM_JENIS, 'Kesehatan') + select_('Frekuensi', 'frekuensi', ENUM_FREK, 'Bulanan') +
     field_('Satuan', 'satuan', 'text', '%', 'maxlength="20"') + field_('Target', 'target', 'number', '', 'step="any" min="0" required') + select_('Arah target', 'arah', [{ v: 'Naik', t: 'Naik (semakin tinggi semakin baik)' }, { v: 'Turun', t: 'Turun (semakin rendah semakin baik)' }], 'Naik') +
     select_('PIC', 'pic', [{ v: '', t: '— Belum ditetapkan —' }].concat(users.filter(u => u.Role === 'pic').map(u => ({ v: u.Username, t: u.Nama }))), '') +
     select_('Program (opsional)', 'program', [{ v: '', t: '— Tanpa program —' }].concat(m.program.filter(p => p.aktif).map(p => ({ v: p.id, t: p.nama + ' (' + p.bidang + ')' }))), '') +
-    select_('Status', 'aktif', [{ v: 'true', t: 'Aktif' }, { v: 'false', t: 'Nonaktif' }], 'true') + '</div>' +
+    select_('Status', 'aktif', [{ v: 'true', t: 'Aktif' }, { v: 'false', t: 'Nonaktif' }], 'true') + select_('Tampilkan di Beranda (Unggulan)', 'unggulan', [{ v: 'Tidak', t: 'Tidak' }, { v: 'Ya', t: 'Ya, tampilkan sebagai indikator populer' }], 'Tidak') + '</div>' +
     field_('Nama indikator', 'nama', 'text', '', 'required maxlength="200"') +
     '<div class="form-actions"><button class="btn btn-primary" type="submit">Simpan Indikator</button><button type="button" class="btn btn-ghost" data-act="toggle-form" data-target="form-indikator">Tutup</button></div><p class="form-msg" role="alert"></p></form></section>';
 
@@ -921,6 +1061,7 @@ function pageTambahIndikator_(m, user, params) {
     select_('Arah target', 'arah', [{ v: 'Naik', t: 'Naik (semakin tinggi semakin baik)' }, { v: 'Turun', t: 'Turun (semakin rendah semakin baik)' }], 'Naik') +
     '<div class="field"><label for="ib_program">Program (opsional)</label><select class="input" id="ib_program" name="program"><option value="">— Tanpa program —</option>' +
     m.program.filter(p => p.aktif).map(p => '<option value="' + esc_(p.id) + '" data-bidang="' + esc_(p.bidang) + '">' + esc_(p.nama + (p.sub ? ' — ' + p.sub : '')) + '</option>').join('') + '</select></div>' +
+    '<div class="field"><label for="ib_ung">Tampilkan di Beranda (Unggulan)</label><select class="input" id="ib_ung" name="unggulan"><option value="Tidak">Tidak</option><option value="Ya">Ya, tampilkan sebagai indikator populer</option></select></div>' +
     '<div class="field"><label for="ib_pic">PIC (opsional)</label><select class="input" id="ib_pic" name="pic"><option value="">— Belum ditetapkan —</option>' +
     users.map(u => '<option value="' + esc_(u.Username) + '" data-bidang="' + esc_(u.Bidang) + '">' + esc_(u.Nama) + (u.Program ? ' (PIC Program)' : '') + '</option>').join('') + '</select></div>' +
     '</div><div class="form-actions"><button class="btn btn-primary" type="submit">Simpan Indikator</button><button type="button" class="btn btn-ghost" data-act="ind-baru-reset">Kosongkan form</button></div><p class="form-msg" role="alert"></p></form></section>';
@@ -1102,9 +1243,9 @@ function monevMeta_(mm, user) {
 }
 
 /* ---------------- Grafik capaian Monev (SVG server-side) ---------------- */
-const GX_WARNA_ = ['#0284c7', '#0d9488', '#6d5bd0', '#d97706', '#db2777', '#65a30d', '#475569', '#0891b2'];
+const GX_WARNA_ = ['#2f7fb5', '#a9d3ee', '#f08a24', '#7a8ea1'];
 const GX_TIER_ = function (c) { return c === null ? 'mute' : c >= 100 ? 'ok' : c >= 80 ? 'warn' : 'crit'; };
-const GX_FILL_ = { ok: '#15803d', warn: '#b45309', crit: '#b91c1c', mute: '#64748b' };
+const GX_FILL_ = { ok: '#2f7fb5', warn: '#d9a064', crit: '#f08a24', mute: '#7a8ea1' };
 
 function gxRata_(arr) {
   const v = arr.filter(x => x !== null && x !== undefined);
@@ -1170,7 +1311,7 @@ function gxPosisi_(seri) {
   return s + '</svg>';
 }
 function gxKpi_(t, v, s, tier) {
-  return '<div class="card card-pad gx-k"><div class="muted sm">' + esc_(t) + '</div><div class="gx-kv" style="color:' + (tier ? GX_FILL_[tier] : '#0369a1') + '">' + esc_(v) + '</div><div class="muted sm">' + esc_(s) + '</div></div>';
+  return '<div class="card card-pad gx-k"><div class="muted sm">' + esc_(t) + '</div><div class="gx-kv" style="color:' + (tier ? GX_FILL_[tier] : '#1f6290') + '">' + esc_(v) + '</div><div class="muted sm">' + esc_(s) + '</div></div>';
 }
 function gxPills_(c) {
   return '<div class="gx-pills">' + c.map((x, i) => { const t = GX_TIER_(x); return '<span class="gx-pill gx-p-' + t + '">TW ' + (i + 1) + ' · ' + (x === null ? '—' : num_(x, 1) + '%') + '</span>'; }).join('') + '</div>';
@@ -1357,11 +1498,182 @@ function pageMonev_(m, user, params, ctx) {
 
 /* ---------------- Router halaman ---------------- */
 
+/* ---------------- Beranda: indikator populer, peringkat kepatuhan, monitoring per indikator ---------------- */
+
+const POLA_POPULER_ = [/kematian ibu|\baki\b/i, /kematian bayi|kematian balita|\bakb\b|\bakaba\b/i, /stunting/i, /tbc|tuberkulosis/i];
+
+/** Indikator yang ditandai "Tampilkan di Beranda"; bila belum ada yang ditandai, dicari otomatis dari nama. */
+function indPopuler_(m) {
+  const tanda = m.ind.filter(i => i.unggulan);
+  if (tanda.length) return tanda.slice(0, 8);
+  const out = [];
+  POLA_POPULER_.forEach(re => { const f = m.ind.find(i => re.test(i.nama) && out.indexOf(i) < 0); if (f) out.push(f); });
+  return out;
+}
+
+function sekPopuler_(m, user) {
+  const li = indPopuler_(m);
+  if (!li.length) return '';
+  let h = '<section aria-label="Indikator populer"><div class="sec-top"><h2 class="h2 flat">Indikator Populer</h2>' +
+    (user.role === 'admin' ? '<button type="button" class="btn btn-ghost btn-sm" data-nav="tambahindikator">' + ic_('add') + 'Atur indikator</button>' : '') + '</div><div class="grid g4 pop-grid">';
+  h += li.map(i =>
+    '<button type="button" class="card pop" data-nav="indikator" data-params=\'' + esc_(JSON.stringify({ q: i.id })) + '\'>' +
+    '<span class="pop-top"><span class="pop-nama">' + esc_(i.nama) + '</span>' + tierChip_(i.tier) + '</span>' +
+    '<span class="pop-val">' + esc_(val_(i.realisasi, i.satuan)) + '</span>' +
+    '<span class="muted sm">' + (i.realBulan ? esc_(BULAN[i.realBulan - 1]) + ' · ' : '') + 'target ' + (i.arah === 'Turun' ? '≤ ' : '≥ ') + esc_(val_(i.target, i.satuan)) + '</span>' +
+    '<span class="pop-spark">' + miniBatang_(i, 200, 44, true) + '</span></button>').join('');
+  return h + '</div></section>';
+}
+
+/** Persentase indikator wajib yang sudah terisi, per bulan (1..bulan berjalan). */
+function trenKepatuhan_(m) {
+  const out = [];
+  for (let b = 1; b <= m.bulan; b++) {
+    let due = 0, isi = 0;
+    m.ind.forEach(i => { const c = i.cells[b - 1]; if (c === 'ok' || c === 'wait') { due++; isi++; } else if (c === 'miss') due++; });
+    out.push({ b: b, due: due, isi: isi, pct: due ? Math.round(isi / due * 1000) / 10 : null });
+  }
+  return out;
+}
+function grafikTren_(t) {
+  const W = 420, H = 150, L = 34, R = 8, T = 14, B = 22, pw = W - L - R, ph = H - T - B, bw = pw / 12;
+  let s = '<svg class="gb" viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Kepatuhan pengisian per bulan">';
+  [0, 50, 100].forEach(v => { const y = T + ph - ph * v / 100; s += '<line class="gb-gr" x1="' + L + '" x2="' + (W - R) + '" y1="' + y + '" y2="' + y + '"/><text class="gb-tx" x="' + (L - 6) + '" y="' + (y + 4) + '" text-anchor="end" font-size="10">' + v + '%</text>'; });
+  for (let b = 1; b <= 12; b++) {
+    const x = L + bw * (b - 1), d = t[b - 1];
+    if (d && d.pct !== null) {
+      const hh = Math.max(2, ph * d.pct / 100);
+      s += '<rect class="' + (d.pct >= 90 ? 'gb-ok' : 'gb-lo') + '" x="' + (x + bw * 0.18) + '" y="' + (T + ph - hh) + '" width="' + (bw * 0.64) + '" height="' + hh + '" rx="3"><title>' + esc_(BULAN[b - 1] + ': ' + num_(d.pct, 1) + '% (' + d.isi + ' dari ' + d.due + ')') + '</title></rect>';
+      if (bw > 26) s += '<text class="gb-val" x="' + (x + bw / 2) + '" y="' + (T + ph - hh - 4) + '" text-anchor="middle" font-size="9.5" font-weight="700">' + num_(d.pct, 0) + '</text>';
+    }
+    s += '<text class="gb-tx" x="' + (x + bw / 2) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10">' + BULAN_S[b - 1].charAt(0) + '</text>';
+  }
+  const y90 = T + ph - ph * 0.9;
+  return s + '<line class="gb-tg" x1="' + L + '" x2="' + (W - R) + '" y1="' + y90 + '" y2="' + y90 + '"/><text class="gb-tgt" x="' + (W - R) + '" y="' + (y90 - 4) + '" text-anchor="end" font-size="10" font-weight="700">Sasaran 90%</text></svg>';
+}
+
+function sekMonitoringBeranda_(m, user, ctx) {
+  const adm = user.role === 'admin', bisaKirim = adm || user.role === 'pimpinan';
+  const urut = m.bidang.slice().sort((a, b) => b.pctInput - a.pctInput || a.menunggak - b.menunggak);
+  let h = '<div class="grid g2"><section class="card card-pad"><div class="sec-top"><h2 class="h2 flat">Peringkat Kepatuhan Pengisian</h2><span class="muted sm">per bidang</span></div><ol class="rank">' +
+    urut.map((b, n) => '<li class="rank-i"><span class="rank-n' + (n === 0 ? ' r1' : '') + '">' + (n + 1) + '</span><div class="rank-main"><div class="rank-top"><b>' + esc_(b.nama) + '</b><span>' + esc_(pct_(b.pctInput)) + '</span></div>' + bar_(b.pctInput, b.pctInput >= 100 ? 'tercapai' : (b.pctInput >= 80 ? 'waspada' : 'kritis')) +
+      '<span class="muted sm">' + b.lengkap + ' lengkap · ' + b.menunggu + ' verifikasi · ' + (b.menunggak ? '<b class="tx-crit">' + b.menunggak + ' tertunggak</b>' : '0 tertunggak') + '</span></div></li>').join('') + '</ol></section>';
+  h += '<section class="card card-pad"><div class="sec-top"><h2 class="h2 flat">Tren Kepatuhan Bulanan</h2><span class="muted sm">indikator terisi ÷ jatuh tempo</span></div>' + grafikTren_(trenKepatuhan_(m)) +
+    '<div class="legend legend-heat"><span><i class="gx-sw sw-ok"></i>90% atau lebih</span><span><i class="gx-sw sw-lo"></i>Di bawah 90%</span><span><i class="gx-sw sw-tg"></i>Sasaran</span></div></section></div>';
+
+  const prioritas = m.ind.filter(i => i.status !== 'na').map(i => ({ i: i, s: (i.status === 'menunggak' ? 100 + i.terlambat : 0) + (i.status === 'menunggu' ? 50 : 0) + (i.tier === 'kritis' ? 30 : 0) }))
+    .sort((a, b) => b.s - a.s).slice(0, 12).map(x => x.i);
+  const tung = m.ind.filter(i => i.status === 'menunggak').length;
+  h += '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Monitoring Pengisian per Indikator</h2><p class="muted sm">12 indikator yang paling perlu perhatian. ' + tung + ' indikator tertunggak.</p></div>' +
+    '<div class="row-actions"><button type="button" class="btn btn-ghost btn-sm" data-nav="monitoring">' + ic_('fact_check') + 'Monitoring lengkap' + (bisaKirim ? ' &amp; pengingat' : '') + '</button></div></div>' +
+    '<div class="legend legend-heat"><span><i class="hc hc-ok"></i>Lengkap</span><span><i class="hc hc-wait"></i>Menunggu verifikasi</span><span><i class="hc hc-miss"></i>Belum diisi</span><span><i class="hc hc-future"></i>Belum jatuh tempo</span><span><i class="hc hc-na"></i>Tidak wajib</span></div>';
+  if (!prioritas.length) return h + kosong_('Belum ada indikator wajib lapor.', 'fact_check') + '</section>';
+  h += '<div class="tbl-wrap"><table class="tbl heat"><thead><tr><th class="sticky">Indikator</th>' + BULAN_S.map(b => '<th class="c">' + b + '</th>').join('') + '</tr></thead><tbody>' +
+    prioritas.map(i => '<tr><th class="sticky" scope="row"><span class="heat-name">' + esc_(i.nama) + '</span><span class="muted sm">' + esc_(i.bidang) + ' · ' + esc_(i.frek) + (i.status === 'menunggak' ? ' · terlambat ' + i.terlambat + ' hari' : '') + '</span></th>' +
+      i.cells.map((c, idx) => {
+        const lbl = { ok: 'Lengkap', wait: 'Menunggu verifikasi', miss: 'Belum diisi', future: 'Belum jatuh tempo', na: 'Tidak wajib' }[c];
+        const bisa = bisaIsi_(user, i) && (c === 'miss' || c === 'ok' || c === 'wait');
+        return '<td class="c">' + (bisa ? '<button type="button" class="hc hc-' + c + ' hc-btn" aria-label="' + esc_(i.nama + ' ' + BULAN[idx] + ': ' + lbl + '. Klik untuk mengisi') + '" ' + isiAttr_(i, idx + 1, ctx) + '></button>'
+          : '<span class="hc hc-' + c + '" role="img" aria-label="' + esc_(BULAN[idx] + ': ' + lbl) + '"></span>') + '</td>';
+      }).join('') + '</tr>').join('') + '</tbody></table></div>';
+  if (adm) {
+    let nw = 0; m.ind.forEach(i => i.cells.forEach(c => { if (c === 'wait') nw++; }));
+    if (nw) h += '<div class="batas-bar batas-info" role="status"><b>' + nw + ' isian menunggu verifikasi.</b> <button type="button" class="btn btn-ghost btn-sm" data-nav="monitoring">Tinjau antrean</button></div>';
+  }
+  return h + '</section>';
+}
+
+/* ---------------- Halaman: Monev SPBE ---------------- */
+
+const SPBE_LVL = ['Belum dinilai', 'Awal', 'Berkembang', 'Terdefinisi', 'Terkelola', 'Optimal'];
+
+function spbeRata_(arr) { const v = arr.filter(x => x !== null && x !== undefined); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; }
+
+function spbeSegmen_(level, target) {
+  let s = '<span class="lv" role="img" aria-label="Level ' + (level || 'belum dinilai') + ' dari 5, target ' + target + '">';
+  for (let k = 1; k <= 5; k++) s += '<i class="' + (level && k <= level ? 'on' : '') + (k === target ? ' tg' : '') + '"></i>';
+  return s + '</span>';
+}
+
+function grafikSpbeTren_(rata, tgt) {
+  const W = 420, H = 150, L = 30, R = 8, T = 14, B = 24, pw = W - L - R, ph = H - T - B, bw = pw / 4;
+  let s = '<svg class="gb" viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Rata-rata level SPBE per triwulan">';
+  [0, 1, 2, 3, 4, 5].forEach(v => { const y = T + ph - ph * v / 5; s += '<line class="gb-gr" x1="' + L + '" x2="' + (W - R) + '" y1="' + y + '" y2="' + y + '"/><text class="gb-tx" x="' + (L - 6) + '" y="' + (y + 4) + '" text-anchor="end" font-size="10">' + v + '</text>'; });
+  rata.forEach((v, q) => {
+    const x = L + bw * q;
+    if (v !== null) {
+      const hh = Math.max(2, ph * v / 5);
+      s += '<rect class="' + (v >= tgt ? 'gb-ok' : 'gb-lo') + '" x="' + (x + bw * 0.25) + '" y="' + (T + ph - hh) + '" width="' + (bw * 0.5) + '" height="' + hh + '" rx="4"><title>' + esc_('TW ' + (q + 1) + ': rata-rata level ' + num_(v, 2)) + '</title></rect><text class="gb-val" x="' + (x + bw / 2) + '" y="' + (T + ph - hh - 4) + '" text-anchor="middle" font-size="11" font-weight="700">' + num_(v, 1) + '</text>';
+    } else s += '<text class="gb-tx" x="' + (x + bw / 2) + '" y="' + (T + ph - 6) + '" text-anchor="middle" font-size="11">–</text>';
+    s += '<text class="gb-tx" x="' + (x + bw / 2) + '" y="' + (H - 7) + '" text-anchor="middle" font-size="11" font-weight="600">TW ' + (q + 1) + '</text>';
+  });
+  const yt = T + ph - ph * tgt / 5;
+  return s + '<line class="gb-tg" x1="' + L + '" x2="' + (W - R) + '" y1="' + yt + '" y2="' + yt + '"/><text class="gb-tgt" x="' + (W - R) + '" y="' + (yt - 4) + '" text-anchor="end" font-size="10" font-weight="700">Target ' + num_(tgt, 1) + '</text></svg>';
+}
+
+function pageSpbe_(m, user, params) {
+  const adm = user.role === 'admin';
+  const tahun = Number(params.tahun) || m.tahun;
+  const data = spbeData_(tahun);
+  let twSel = [1, 2, 3, 4].indexOf(Number(params.tw)) >= 0 ? Number(params.tw) : Math.min(4, Math.ceil(m.bulan / 3));
+  if ([1, 2, 3, 4].indexOf(Number(params.tw)) < 0) while (twSel > 1 && !data.some(d => d.tw[twSel - 1].level !== null)) twSel--;
+  const q = twSel - 1;
+  const lv = d => d.tw[q].level, tg = d => d.tw[q].target || d.target;
+  const dinilai = data.filter(d => lv(d) !== null);
+  const capai = dinilai.filter(d => lv(d) >= tg(d));
+  const rataAll = spbeRata_(data.map(lv));
+  const thn = []; for (let y = m.tahun - 2; y <= m.tahun + 1; y++) thn.push({ v: String(y), t: String(y) });
+  let h = pageHead_('Monev SPBE', 'Pemantauan kinerja Sistem Pemerintahan Berbasis Elektronik per indikator. Level 1 (Awal) sampai 5 (Optimal), dinilai tiap triwulan.', '<span class="chip chip-info">' + SPBE_NAMA.length + ' indikator</span>');
+  h += '<div class="filters card card-flat">' + filterSel_('Tahun', 'tahun', thn, String(tahun)) + filterSel_('Triwulan', 'tw', [1, 2, 3, 4].map(k => ({ v: String(k), t: 'Triwulan ' + ['I', 'II', 'III', 'IV'][k - 1] })), String(twSel)) +
+    (adm ? '<span class="muted sm">Sebagai admin Anda dapat mengubah penilaian pada baris yang dibuka.</span>' : '<span class="muted sm">Penilaian diisi oleh admin.</span>') + '</div>';
+  h += '<section class="grid g4">' + kpiCard_('Rata-rata level', rataAll === null ? '—' : num_(rataAll, 2), 'dari 5 · TW ' + ['I', 'II', 'III', 'IV'][q], 'info', 'speed') +
+    kpiCard_('Capai target', String(capai.length), 'dari ' + dinilai.length + ' yang dinilai', 'ok', 'task_alt') +
+    kpiCard_('Di bawah target', String(dinilai.length - capai.length), 'Perlu peningkatan', dinilai.length - capai.length ? 'warn' : 'ok', 'trending_up') +
+    kpiCard_('Belum dinilai', String(data.length - dinilai.length), 'dari ' + data.length + ' indikator', data.length - dinilai.length ? 'crit' : 'ok', 'pending_actions') + '</section>';
+
+  const grupHtml = SPBE_GRUP.map(g => {
+    const di = data.filter(d => d.grup === g.id), r = spbeRata_(di.map(lv)), t = spbeRata_(di.map(tg));
+    return '<div class="spbe-g"><div class="rank-top"><b>' + esc_(g.nama) + '</b><span>' + (r === null ? '—' : num_(r, 2)) + ' / ' + num_(t, 1) + '</span></div>' +
+      '<div class="gbar" role="img" aria-label="' + esc_(g.nama + ': ' + (r === null ? 'belum dinilai' : num_(r, 2)) + ' dari target ' + num_(t, 1)) + '"><i style="width:' + (r === null ? 0 : r / 5 * 100) + '%"></i><u style="left:' + (t / 5 * 100) + '%"></u></div>' +
+      '<span class="muted sm">Indikator ' + g.dari + '–' + g.sampai + ' · ' + di.filter(d => lv(d) !== null && lv(d) >= tg(d)).length + ' dari ' + di.length + ' capai target</span></div>';
+  }).join('');
+  const tren = [0, 1, 2, 3].map(k => spbeRata_(data.map(d => d.tw[k].level)));
+  h += '<div class="grid g2"><section class="card card-pad"><div class="sec-top"><h2 class="h2 flat">Level per Kelompok</h2><span class="muted sm">biru = level, garis jingga = target</span></div><div class="stack">' + grupHtml + '</div></section>' +
+    '<section class="card card-pad"><div class="sec-top"><h2 class="h2 flat">Tren per Triwulan ' + tahun + '</h2><span class="muted sm">rata-rata level 28 indikator</span></div>' + grafikSpbeTren_(tren, spbeRata_(data.map(d => d.target)) || SPBE_TARGET_DASAR) + '</section></div>';
+
+  h += '<div class="im-bar"><div class="legend legend-heat"><span><i class="gx-sw sw-ok"></i>Level tercapai</span><span><i class="gx-sw sw-tg"></i>Penanda target</span></div>' +
+    '<div class="acc-tools"><button type="button" class="btn btn-ghost btn-sm" data-act="acc-all" data-v="1">Buka semua</button><button type="button" class="btn btn-ghost btn-sm" data-act="acc-all" data-v="0">Tutup semua</button></div></div>';
+  h += SPBE_GRUP.map(g => {
+    const di = data.filter(d => d.grup === g.id);
+    return '<section class="card card-pad spbe-grp"><div class="sec-top"><h2 class="h2 flat">' + esc_(g.nama) + '</h2><span class="muted sm">Indikator ' + g.dari + '–' + g.sampai + '</span></div><div class="acc-list">' + di.map(d => {
+      const l = lv(d), t = tg(d), cur = d.tw[q];
+      const st = l === null ? chip_('mute', 'Belum dinilai') : (l >= t ? chip_('ok', 'Capai target', true) : chip_('crit', 'Di bawah target'));
+      const riw = d.tw.map((x, k) => '<div class="spbe-tw' + (k === q ? ' now' : '') + '"><span class="muted sm">TW ' + (k + 1) + '</span><b>' + (x.level === null ? '—' : x.level) + '</b></div>').join('');
+      const form = adm ? '<form class="spbe-form" data-api="apiSimpanSpbe" novalidate><input type="hidden" name="tahun" value="' + tahun + '"><input type="hidden" name="triwulan" value="' + twSel + '"><input type="hidden" name="no" value="' + d.no + '">' +
+        '<h4 class="h3">Penilaian Triwulan ' + ['I', 'II', 'III', 'IV'][q] + ' ' + tahun + '</h4><div class="form-grid">' +
+        select_('Level (1–5)', 'level', [{ v: '', t: '— Belum dinilai —' }].concat([1, 2, 3, 4, 5].map(k => ({ v: String(k), t: k + ' — ' + SPBE_LVL[k] }))), l === null ? '' : String(l)) +
+        select_('Target level', 'target', [1, 2, 3, 4, 5].map(k => ({ v: String(k), t: String(k) })), String(t)) + '</div>' +
+        field_('Catatan', 'catatan', 'textarea', cur.catatan, 'maxlength="500" rows="2"') + field_('Tautan bukti dukung (opsional)', 'bukti', 'url', cur.bukti, 'maxlength="300" placeholder="https://…"') +
+        '<div class="form-actions"><button class="btn btn-primary" type="submit">Simpan Penilaian</button></div><p class="form-msg" role="alert"></p></form>' : '';
+      return '<article class="card im-acc spbe-i" data-acc="spbe-' + d.no + '"><button type="button" class="acc-head spbe-head" data-act="acc" data-id="spbe-' + d.no + '" aria-expanded="false" aria-controls="acc-spbe-' + d.no + '">' +
+        '<span class="acc-id"><span class="ir-id">Indikator ' + d.no + '</span><span class="ir-name">' + esc_(d.nama) + '</span></span>' +
+        '<span class="acc-spark">' + spbeSegmen_(l, t) + '</span><span class="acc-val"><b>' + (l === null ? '—' : l) + '</b><span class="muted sm">target ' + t + '</span></span>' +
+        '<span class="acc-st">' + st + '</span><span class="ic acc-chev" aria-hidden="true">expand_more</span></button>' +
+        '<div class="acc-body" id="acc-spbe-' + d.no + '" hidden><div class="acc-cols"><div><h4 class="h3">Perkembangan ' + tahun + '</h4><div class="spbe-tws">' + riw + '</div>' +
+        '<p class="muted sm">' + (l === null ? SPBE_LVL[0] : 'Level ' + l + ': ' + SPBE_LVL[l]) + '</p>' +
+        (cur.catatan ? '<p class="note-sol">' + ic_('sticky_note_2') + '<span>' + esc_(cur.catatan) + '</span></p>' : '') +
+        (cur.bukti ? '<p><a class="btn btn-ghost btn-sm" href="' + esc_(cur.bukti) + '" target="_blank" rel="noopener noreferrer">' + ic_('attach_file') + 'Buka bukti dukung</a></p>' : '') +
+        (cur.oleh ? '<p class="muted sm">Dinilai ' + esc_(cur.oleh) + ' · ' + esc_(tglId_(cur.pada)) + '</p>' : '') + '</div><div>' + form + '</div></div></div></article>';
+    }).join('') + '</div></section>';
+  }).join('');
+  return h;
+}
+
 const PAGES_ = {
   beranda: { fn: pageBeranda_, title: 'Beranda' },
   inputdata: { fn: pageInputData_, title: 'Input Data', roles: ['admin', 'pic'] },
   indikator: { fn: pageIndikator_, title: 'Indikator Kesehatan' },
-  iku: { fn: pageIku_, title: 'IKU' },
+  spbe: { fn: pageSpbe_, title: 'Monev SPBE' },
   monev: { fn: pageMonev_, title: 'Monev Kinerja' },
   analitik: { fn: pageAnalitik_, title: 'Capaian & Analitik' },
   monitoring: { fn: pageMonitoring_, title: 'Monitoring Pengisian' },
