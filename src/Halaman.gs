@@ -939,6 +939,22 @@ function pagePengaturan_(m, user, params, ctx) {
     field_('Judul kegiatan', 'judul', 'text', '', 'required maxlength="150"') +
     '<div class="form-actions"><button class="btn btn-primary" type="submit">Simpan Kegiatan</button><button type="button" class="btn btn-ghost" data-act="toggle-form" data-target="form-kegiatan">Tutup</button></div><p class="form-msg" role="alert"></p></form></section>';
 
+  // Galeri halaman awal (admin): unggah foto, urutkan, sembunyikan, hapus.
+  const gal = galDaftar_();
+  h += '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Galeri Halaman Awal</h2><p class="muted sm">Foto kegiatan yang berputar di halaman depan tanpa login. Maksimal ' + GAL_MAKS + ' foto; ukuran otomatis diperkecil.</p></div>' + chip_('info', gal.length + ' / ' + GAL_MAKS + ' foto') + '</div>' +
+    '<form id="form-galeri" novalidate><div class="form-grid"><div class="field"><label for="gl-file">Pilih foto (JPG / PNG)</label><input class="input" id="gl-file" type="file" accept="image/jpeg,image/png" required></div>' +
+    field_('Judul (opsional)', 'judul', 'text', '', 'maxlength="80"') + field_('Keterangan (opsional)', 'ket', 'text', '', 'maxlength="160"') + '</div>' +
+    '<div class="form-actions"><button class="btn btn-primary" type="submit"' + (gal.length >= GAL_MAKS ? ' disabled' : '') + '>' + ic_('add_photo_alternate') + 'Unggah Foto</button></div><p class="form-msg" role="alert"></p></form>' +
+    (gal.length ? '<div class="gal-adm">' + gal.map((x, n) =>
+      '<div class="gal-row" data-id="' + esc_(x.id) + '"><img class="gal-th" alt="" data-gal-thumb="' + esc_(x.id) + '">' +
+      '<div class="gal-ed"><input class="input" data-f="judul" value="' + esc_(x.judul) + '" maxlength="80" placeholder="Judul" aria-label="Judul foto"><input class="input" data-f="ket" value="' + esc_(x.ket) + '" maxlength="160" placeholder="Keterangan" aria-label="Keterangan foto"></div>' +
+      '<div class="row-actions">' + (x.tampil ? chip_('ok', 'Tampil') : chip_('mute', 'Disembunyikan')) +
+      '<button type="button" class="icon-btn" data-act="gal-geser" data-id="' + esc_(x.id) + '" data-arah="naik" aria-label="Naikkan"' + (n === 0 ? ' disabled' : '') + '>' + ic_('arrow_upward') + '</button>' +
+      '<button type="button" class="icon-btn" data-act="gal-geser" data-id="' + esc_(x.id) + '" data-arah="turun" aria-label="Turunkan"' + (n === gal.length - 1 ? ' disabled' : '') + '>' + ic_('arrow_downward') + '</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="gal-simpan" data-id="' + esc_(x.id) + '" data-tampil="' + (x.tampil ? 'Ya' : 'Tidak') + '">Simpan</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="gal-simpan" data-id="' + esc_(x.id) + '" data-tampil="' + (x.tampil ? 'Tidak' : 'Ya') + '">' + (x.tampil ? 'Sembunyikan' : 'Tampilkan') + '</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="gal-hapus" data-id="' + esc_(x.id) + '" data-judul="' + esc_(x.judul || 'foto ini') + '">Hapus</button></div></div>').join('') + '</div>' : '<p class="muted">Belum ada foto. Unggah foto pertama untuk menampilkan galeri di halaman awal.</p>') + '</section>';
+
   const users = readTable_(SHEET.USERS);
   const allInd = readTable_(SHEET.INDIKATOR);
   h += '<section class="card card-pad"><div class="sec-top"><h2 class="h2 flat">Indikator</h2><button type="button" class="btn btn-ghost btn-sm" data-act="edit-ind" data-json="{}">' + ic_('add') + 'Tambah</button></div>' +
@@ -1669,11 +1685,62 @@ function pageSpbe_(m, user, params) {
   return h;
 }
 
+
+/* ---------------- Halaman: Sync Form (ETL data sektoral) ---------------- */
+
+function pageSyncForm_(m, user, params) {
+  const d = syncBaca_(String(params.kode || ''), params.q);
+  let h = pageHead_('Sync Form', 'Penyelaras data: spreadsheet sektoral yang berantakan dirapikan otomatis menjadi tabel bersih (db_clean) yang siap dipakai analisis.', '<a class="btn btn-ghost" target="_blank" rel="noopener noreferrer" href="' + esc_(d.url) + '">' + ic_('open_in_new') + 'Buka spreadsheet sektoral</a>');
+  if (!d.ok) {
+    return h + '<section class="card card-pad"><div class="batas-bar batas-crit" role="alert"><b>' + esc_(d.galat) + '</b></div><p class="muted">Setelah akses diberikan, muat ulang halaman ini.</p>' + formSumberSektoral_(d) + '</section>';
+  }
+  const baru = d.adaClean && d.nBaris > 0;
+  h += '<section class="grid g4">' + kpiCard_('Tabel sumber', String(d.nTabelSumber), 'Sheet 2.1, 2.2, ... di spreadsheet', 'info', 'table_chart') +
+    kpiCard_('Tabel tersinkron', d.nTabel + ' / ' + d.nTabelSumber, d.kosong.length ? 'Belum ada isi: ' + d.kosong.slice(0, 6).join(', ') + (d.kosong.length > 6 ? ' +' + (d.kosong.length - 6) : '') : 'Semua tabel sudah masuk db_clean', d.kosong.length ? 'info' : 'ok', 'sync') +
+    kpiCard_('Baris data bersih', String(d.nBaris), d.nCatatan + ' berisi catatan teks asli', 'ok', 'dataset') +
+    kpiCard_('Katalog data', String(d.nKatalog), 'Hasil reviu daftar data', 'info', 'menu_book') + '</section>';
+  h += '<section class="card card-pad"><div class="sec-top"><div><h2 class="h2 flat">Status Sinkronisasi</h2><p class="muted sm">Sinkron berjalan di dalam spreadsheet, otomatis saat data diubah atau baris ditambah.</p></div>' +
+    (baru ? chip_(d.galatLog ? 'warn' : 'ok', d.galatLog ? d.galatLog + ' galat di log' : 'Berjalan', !d.galatLog) : chip_('crit', 'Belum pernah disinkronkan')) + '</div>';
+  h += baru ? '<p>Sinkron terakhir: <b>' + esc_(d.sinkronTerakhir || '—') + '</b> · data terbaru ditulis <b>' + esc_(d.terbaru || '—') + '</b></p>' :
+    '<div class="batas-bar batas-warn" role="status"><b>db_clean belum ada.</b> Pasang skrip di spreadsheet sektoral, lalu jalankan menu Sync Form &gt; Sinkronkan semua sekarang. Langkahnya ada di bagian bawah halaman ini.</div>';
+  h += '</section>';
+
+  if (baru) {
+    const sel = d.tabel.map(t => ({ v: t.kode, t: t.kode + ' — ' + t.nama.slice(0, 70) }));
+    h += '<section class="card card-pad"><div class="sec-top"><h2 class="h2 flat">Pratinjau db_clean</h2><span class="muted sm">format panjang: satu baris untuk satu nilai</span></div>' +
+      '<div class="filters card card-flat">' + filterSel_('Tabel', 'kode', sel, d.kode) +
+      '<label class="search"><span class="sr">Cari</span>' + ic_('search') + '<input type="search" class="input input-search f-param" data-param="q" value="' + esc_(params.q || '') + '" placeholder="Cari kabupaten, tahun, kategori" maxlength="40"></label></div>';
+    h += d.pratinjau.length ? '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Kabupaten</th><th>Tahun</th><th>Kategori</th><th class="r">Nilai</th><th>Catatan</th></tr></thead><tbody>' +
+      d.pratinjau.map(r => '<tr><td>' + esc_(r.kab) + '</td><td>' + esc_(r.tahun || '—') + '</td><td>' + esc_(r.kategori) + '</td><td class="r">' + (r.nilai === '' ? '<span class="muted">—</span>' : esc_(num_(r.nilai, Math.round(r.nilai) === r.nilai ? 0 : 2))) + '</td><td class="sm">' + esc_(r.catatan) + '</td></tr>').join('') + '</tbody></table></div>' +
+      '<p class="muted sm">Menampilkan maksimal 60 baris pertama untuk tabel terpilih. Data lengkap ada di sheet db_clean.</p>' : kosong_('Tidak ada baris yang cocok.', 'search_off');
+    h += '</section>';
+    const ks = Object.keys(d.statusKatalog);
+    if (ks.length) h += '<section class="card card-pad"><div class="sec-top"><h2 class="h2 flat">Katalog Data (db_katalog)</h2><span class="muted sm">status reviu setelah dibakukan</span></div><div class="row-actions">' +
+      ks.map(k => chip_(k === 'Dihapus' ? 'crit' : (k === 'Tetap' ? 'ok' : 'info'), k + ' · ' + d.statusKatalog[k])).join('') + '</div></section>';
+  }
+  h += '<section class="card card-pad"><h2 class="h2 flat">Log Sinkronisasi</h2>' + (d.log.length ? '<ul class="timeline">' + d.log.map(l =>
+    '<li><i class="dot ' + (l.aksi === 'ERROR' ? 'd-crit' : (l.aksi === 'PERINGATAN' ? 'd-warn' : 'd-info')) + '"></i><div><b>' + esc_(l.aksi) + '</b>' + (l.sheet ? ' · ' + esc_(l.sheet) : '') + (l.baris !== '' ? ' · ' + esc_(l.baris) + ' baris' : '') +
+    '<div class="muted sm">' + esc_(l.waktu) + (l.ket ? ' · ' + esc_(l.ket) : '') + '</div></div></li>').join('') + '</ul>' : kosong_('Belum ada log. Jalankan sinkron pertama dari spreadsheet.', 'history')) + '</section>';
+
+  h += '<section class="card card-pad"><h2 class="h2 flat">Cara Memasang (sekali saja)</h2><ol class="langkah">' +
+    '<li>Buka spreadsheet sektoral, pilih <b>Ekstensi &gt; Apps Script</b>.</li>' +
+    '<li>Hapus isi file <b>Kode.gs</b>, lalu tempel seluruh isi file <b>SyncForm.gs</b>. Simpan.</li>' +
+    '<li>Muat ulang spreadsheet. Muncul menu <b>Sync Form</b>. Pilih <b>Sinkronkan semua sekarang</b> dan setujui izin akses.</li>' +
+    '<li>Pilih <b>Pasang pemicu otomatis</b>. Setelah itu data akan disinkron sendiri tiap ada perubahan, tanpa perlu menekan apa pun.</li></ol>' + formSumberSektoral_(d) + '</section>';
+  return h;
+}
+function formSumberSektoral_(d) {
+  return '<form class="msl-form" data-api="apiSimpanSektoral" novalidate><h3 class="h3">Sumber spreadsheet</h3>' +
+    field_('Tautan atau ID spreadsheet sektoral', 'sumber', 'text', d.url, 'required maxlength="300"') +
+    '<div class="form-actions"><button class="btn btn-ghost" type="submit">Simpan sumber</button></div><p class="form-msg" role="alert"></p></form>';
+}
+
 const PAGES_ = {
   beranda: { fn: pageBeranda_, title: 'Beranda' },
   inputdata: { fn: pageInputData_, title: 'Input Data', roles: ['admin', 'pic'] },
   indikator: { fn: pageIndikator_, title: 'Indikator Kesehatan' },
   spbe: { fn: pageSpbe_, title: 'Monev SPBE' },
+  syncform: { fn: pageSyncForm_, title: 'Sync Form', roles: ['admin'] },
   monev: { fn: pageMonev_, title: 'Monev Kinerja' },
   analitik: { fn: pageAnalitik_, title: 'Capaian & Analitik' },
   monitoring: { fn: pageMonitoring_, title: 'Monitoring Pengisian' },

@@ -15,7 +15,7 @@ const SESI_DETIK = 21600; // 6 jam (batas maksimum CacheService)
 
 const SHEET = {
   CONFIG: 'Config', BIDANG: 'Bidang', INDIKATOR: 'Indikator', ISIAN: 'Isian',
-  USERS: 'Users', MASALAH: 'Masalah', PERMINTAAN: 'PermintaanData', LOG: 'Log', PROGRAM: 'Program', TARGET: 'Target', BUKTI: 'Bukti', MONEV: 'Monev', KALENDER: 'Kalender', SPBE: 'SPBE'
+  USERS: 'Users', MASALAH: 'Masalah', PERMINTAAN: 'PermintaanData', LOG: 'Log', PROGRAM: 'Program', TARGET: 'Target', BUKTI: 'Bukti', MONEV: 'Monev', KALENDER: 'Kalender', SPBE: 'SPBE', GALERI: 'Galeri'
 };
 
 const HEADERS = {
@@ -27,6 +27,7 @@ const HEADERS = {
   Masalah: ['ID', 'Tanggal', 'IndikatorID', 'Bidang', 'Permasalahan', 'Rekomendasi', 'Prioritas', 'Status', 'Penanggung', 'Tenggat', 'DibuatOleh'],
   PermintaanData: ['ID', 'Tanggal', 'Pemohon', 'Instansi', 'Kebutuhan', 'Format', 'Tenggat', 'Status', 'Catatan', 'Lampiran', 'Kontak', 'Sumber', 'DitinjauOleh', 'DitinjauPada'],
   Log: ['Waktu', 'Jenis', 'Aktor', 'Deskripsi'],
+  Galeri: ['ID', 'Judul', 'Keterangan', 'FileId', 'Urutan', 'Tampil', 'DibuatOleh', 'DibuatPada'],
   SPBE: ['Kunci', 'Tahun', 'Triwulan', 'No', 'Level', 'Target', 'Catatan', 'Bukti', 'DiisiOleh', 'DiisiPada'],
   Kalender: ['ID', 'Judul', 'Mulai', 'Selesai', 'Jam', 'Tempat', 'Jenis', 'Bidang', 'Publik', 'DibuatOleh', 'DibuatPada'],
   Program: ['ID', 'Nama', 'Bidang', 'Sub', 'Aktif'],
@@ -62,7 +63,7 @@ function doGet(e) {
 /* ---------------- API JSON (dipakai tampilan statis, mis. GitHub Pages) ----------------
  * Klien statis mengirim POST text/plain berisi {"fn":"nama","args":[...]} ke URL web app.
  * Hanya fungsi pada daftar putih di bawah yang boleh dipanggil; otorisasi tetap lewat token sesi. */
-const API_JSON_ = ['apiMerek', 'apiSimpanSpbe', 'apiKalenderPublik', 'apiSimpanKegiatan', 'apiHapusKegiatan', 'apiMulai', 'apiAjukanDataPublik', 'apiUnduhLampiranPermintaan', 'doLogin', 'doLogout', 'getPageContent', 'apiBootstrap', 'apiAmbilIsian', 'apiSimpanIsian', 'apiVerifikasi', 'apiKirimPengingat',
+const API_JSON_ = ['apiMerek', 'apiSimpanSpbe', 'apiSimpanSektoral', 'apiGaleriPublik', 'apiFotoGaleri', 'apiFotoGaleriAdmin', 'apiUnggahFoto', 'apiUbahFoto', 'apiGeserFoto', 'apiHapusFoto', 'apiKalenderPublik', 'apiSimpanKegiatan', 'apiHapusKegiatan', 'apiMulai', 'apiAjukanDataPublik', 'apiUnduhLampiranPermintaan', 'doLogin', 'doLogout', 'getPageContent', 'apiBootstrap', 'apiAmbilIsian', 'apiSimpanIsian', 'apiVerifikasi', 'apiKirimPengingat',
   'apiSimpanMasalah', 'apiUbahStatusMasalah', 'apiSimpanPermintaan', 'apiUbahStatusPermintaan', 'apiSimpanConfig', 'apiSimpanIndikator', 'apiSimpanProgram',
   'apiSimpanTarget', 'apiSimpanUser', 'apiResetPassword', 'apiUbahStatusUser', 'apiUbahPassword', 'apiExportPdf', 'apiDaftarBukti', 'apiUnggahBukti',
   'apiUnduhBukti', 'apiHapusBukti', 'apiTarikData', 'apiSimpanMonev', 'apiHapusMonev', 'apiUnggahBuktiMonev', 'apiUnduhBuktiMonev', 'apiHapusBuktiMonev'];
@@ -1076,6 +1077,167 @@ function apiSimpanSpbe(token, p) {
     });
     catatLog_('spbe', user.username, 'SPBE ' + kunci + ' level ' + (level === '' ? '-' : level));
     return { hasil: hasil };
+  });
+}
+
+/* ---------------- Sync Form: baca hasil ETL dari spreadsheet data sektoral ---------------- */
+
+const SEKTORAL_ID_BAWAAN = '1M5t3ZN8Y_XEIYUHaWJogyGqI-wOLWslxkTpLZ-BrnEA';
+function sektoralId_() {
+  const r = readTable_(SHEET.CONFIG).find(x => x.Kunci === 'SektoralID');
+  const v = r ? String(r.Nilai || '').trim() : '';
+  return /^[A-Za-z0-9_-]{20,}$/.test(v) ? v : SEKTORAL_ID_BAWAAN;
+}
+function apiSimpanSektoral(token, p) {
+  return run_(() => {
+    const user = auth_(token, ['admin']);
+    const t = String((p && p.sumber) || '').trim();
+    const m = /\/d\/([A-Za-z0-9_-]{20,})/.exec(t) || /^([A-Za-z0-9_-]{20,})$/.exec(t);
+    if (!m) throw new Error('Tempel tautan spreadsheet Google atau ID-nya.');
+    upsertRow_(SHEET.CONFIG, o => o.Kunci === 'SektoralID', { Kunci: 'SektoralID', Nilai: m[1] });
+    catatLog_('syncform', user.username, 'Mengubah sumber data sektoral');
+    return { id: m[1] };
+  });
+}
+/** Ringkasan, pratinjau, dan log dari sheet db_clean / db_katalog / db_log pada spreadsheet sektoral. Tidak pernah melempar: galat dikembalikan sebagai pesan. */
+function syncBaca_(kode, q) {
+  const id = sektoralId_();
+  const hasil = { id: id, url: 'https://docs.google.com/spreadsheets/d/' + id + '/edit', ok: false };
+  let ss;
+  try { ss = SpreadsheetApp.openById(id); }
+  catch (e) { hasil.galat = 'Spreadsheet tidak dapat dibuka. Pastikan akun pemilik aplikasi ini punya akses ke spreadsheet sektoral.'; return hasil; }
+  const names = ss.getSheets().map(s => s.getName());
+  hasil.nTabelSumber = names.filter(n => /^\d+\.\d+$/.test(n)).length;
+  hasil.adaClean = names.indexOf('db_clean') >= 0;
+  const baca = n => { const sh = ss.getSheetByName(n); return sh && sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues() : []; };
+  const clean = baca('db_clean');
+  const kodeMap = {}, urut = [];
+  let terbaru = '';
+  clean.forEach(r => {
+    const k = String(r[0]);
+    if (!kodeMap[k]) { kodeMap[k] = { kode: k, nama: String(r[1]), n: 0 }; urut.push(k); }
+    kodeMap[k].n++;
+    const d = String(r[7] || '');
+    if (d > terbaru) terbaru = d;
+  });
+  urut.sort((a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); return (x[0] - y[0]) || (x[1] - y[1]); });
+  hasil.nBaris = clean.length;
+  hasil.tabel = urut.map(k => kodeMap[k]);
+  hasil.nTabel = urut.length;
+  hasil.kosong = names.filter(n => /^\d+\.\d+$/.test(n) && !kodeMap[n]).sort((a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); return (x[0] - y[0]) || (x[1] - y[1]); });
+  hasil.terbaru = terbaru;
+  const pilih = kodeMap[kode] ? kode : (urut[0] || '');
+  hasil.kode = pilih;
+  const qq = String(q || '').toLowerCase().trim();
+  hasil.pratinjau = clean.filter(r => String(r[0]) === pilih && (!qq || [r[2], r[3], r[4]].join(' ').toLowerCase().indexOf(qq) >= 0)).slice(0, 60)
+    .map(r => ({ kab: String(r[2]), tahun: String(r[3]), kategori: String(r[4]), nilai: r[5] === '' ? '' : Number(r[5]), catatan: String(r[6] || '') }));
+  hasil.nCatatan = clean.filter(r => String(r[6] || '') !== '').length;
+  const kat = baca('db_katalog');
+  hasil.nKatalog = kat.length;
+  hasil.statusKatalog = {};
+  kat.forEach(r => { const s = String(r[9] || '—'); hasil.statusKatalog[s] = (hasil.statusKatalog[s] || 0) + 1; });
+  const log = baca('db_log');
+  hasil.log = log.slice(-15).reverse().map(r => ({ waktu: String(r[0]), aksi: String(r[1]), sheet: String(r[2]), baris: r[3], ket: String(r[4] || '') }));
+  hasil.sinkronTerakhir = log.length ? String(log[log.length - 1][0]) : '';
+  hasil.galatLog = log.slice(-30).filter(r => String(r[1]) === 'ERROR').length;
+  hasil.ok = true;
+  return hasil;
+}
+
+/* ---------------- Galeri halaman awal ---------------- */
+
+const GAL_MAKS = 12, GAL_MAKS_BYTE = 1500000;
+function folderGaleri_() {
+  const r = readTable_(SHEET.CONFIG).find(x => x.Kunci === 'FolderGaleri');
+  if (r && r.Nilai) { try { return DriveApp.getFolderById(String(r.Nilai)); } catch (e) { /* folder hilang: buat baru */ } }
+  const f = DriveApp.createFolder('Galeri Halaman Awal DKPPKB Sulbar Intelligence');
+  upsertRow_(SHEET.CONFIG, o => o.Kunci === 'FolderGaleri', { Kunci: 'FolderGaleri', Nilai: f.getId() });
+  return f;
+}
+function galObj_(r) {
+  return { id: String(r.ID), judul: String(r.Judul || ''), ket: String(r.Keterangan || ''), urut: Number(r.Urutan) || 0, tampil: String(r.Tampil) !== 'Tidak', fileId: String(r.FileId || '') };
+}
+function galDaftar_() {
+  return readTable_(SHEET.GALERI).filter(r => r.ID && r.FileId).map(galObj_).sort((a, b) => a.urut - b.urut);
+}
+/** Daftar foto yang boleh tampil di halaman awal (tanpa sesi). Hanya id, judul, keterangan. */
+function apiGaleriPublik() {
+  return run_(() => galDaftar_().filter(x => x.tampil).map(x => ({ id: x.id, judul: x.judul, ket: x.ket })));
+}
+function galFoto_(id, bolehTersembunyi) {
+  const x = galDaftar_().find(g => g.id === String(id));
+  if (!x || (!x.tampil && !bolehTersembunyi)) throw new Error('Foto tidak ditemukan.');
+  let blob;
+  try { blob = DriveApp.getFileById(x.fileId).getBlob(); } catch (e) { throw new Error('File foto tidak ditemukan di Google Drive.'); }
+  return { mime: String(blob.getContentType() || 'image/jpeg'), base64: Utilities.base64Encode(blob.getBytes()) };
+}
+function apiFotoGaleri(id) { return run_(() => galFoto_(id, false)); }
+function apiFotoGaleriAdmin(token, id) { return run_(() => { auth_(token, ['admin']); return galFoto_(id, true); }); }
+function apiUnggahFoto(token, p) {
+  return run_(() => {
+    const user = auth_(token, ['admin']);
+    p = p || {};
+    const b64 = String(p.base64 || '');
+    if (!b64 || b64.length > GAL_MAKS_BYTE * 1.4) throw new Error('Foto kosong atau lebih besar dari ' + (GAL_MAKS_BYTE / 1000000) + ' MB.');
+    const bytes = Utilities.base64Decode(b64);
+    if (!bytes.length || bytes.length > GAL_MAKS_BYTE) throw new Error('Foto kosong atau lebih besar dari ' + (GAL_MAKS_BYTE / 1000000) + ' MB.');
+    const b = i => (bytes[i] & 255);
+    const jpeg = b(0) === 0xFF && b(1) === 0xD8 && b(2) === 0xFF, png = b(0) === 0x89 && b(1) === 0x50 && b(2) === 0x4E && b(3) === 0x47;
+    if (!jpeg && !png) throw new Error('Format foto harus JPG atau PNG.');
+    const semua = galDaftar_();
+    if (semua.length >= GAL_MAKS) throw new Error('Galeri maksimal ' + GAL_MAKS + ' foto. Hapus yang tidak terpakai.');
+    const id = 'GL-' + Utilities.formatDate(new Date(), TZ, 'yyMMddHHmmss') + '-' + Utilities.getUuid().slice(0, 4);
+    const file = folderGaleri_().createFile(Utilities.newBlob(bytes, jpeg ? 'image/jpeg' : 'image/png', id + (jpeg ? '.jpg' : '.png')));
+    appendObj_(SHEET.GALERI, {
+      ID: id, Judul: bersih_(p.judul, 80), Keterangan: bersih_(p.ket, 160), FileId: file.getId(),
+      Urutan: semua.reduce((m, x) => Math.max(m, x.urut), 0) + 1, Tampil: 'Ya', DibuatOleh: user.nama, DibuatPada: nowStr_()
+    });
+    catatLog_('galeri', user.username, 'Unggah foto ' + id);
+    return { id: id };
+  });
+}
+function apiUbahFoto(token, p) {
+  return run_(() => {
+    const user = auth_(token, ['admin']);
+    p = p || {};
+    const id = String(p.id || '');
+    if (!galDaftar_().some(x => x.id === id)) throw new Error('Foto tidak ditemukan.');
+    upsertRow_(SHEET.GALERI, o => String(o.ID) === id, { Judul: bersih_(p.judul, 80), Keterangan: bersih_(p.ket, 160), Tampil: p.tampil === 'Tidak' || p.tampil === false ? 'Tidak' : 'Ya' });
+    catatLog_('galeri', user.username, 'Ubah foto ' + id);
+    return true;
+  });
+}
+function apiGeserFoto(token, id, arah) {
+  return run_(() => {
+    const user = auth_(token, ['admin']);
+    const li = galDaftar_(), i = li.findIndex(x => x.id === String(id));
+    if (i < 0) throw new Error('Foto tidak ditemukan.');
+    const j = arah === 'naik' ? i - 1 : i + 1;
+    if (j < 0 || j >= li.length) return false;
+    const urutan = li.map(x => x.id);
+    const tmp = urutan[i]; urutan[i] = urutan[j]; urutan[j] = tmp;
+    urutan.forEach((gid, k) => {
+      const lama = li.find(x => x.id === gid);
+      if (lama.urut !== k + 1) upsertRow_(SHEET.GALERI, o => String(o.ID) === gid, { Urutan: k + 1 });
+    });
+    const a = li[i];
+    catatLog_('galeri', user.username, 'Geser foto ' + a.id);
+    return true;
+  });
+}
+function apiHapusFoto(token, id) {
+  return run_(() => {
+    const user = auth_(token, ['admin']);
+    const lock = LockService.getScriptLock();
+    lock.waitLock(10000);
+    try {
+      const r = readTable_(SHEET.GALERI).find(x => String(x.ID) === String(id));
+      if (!r) throw new Error('Foto tidak ditemukan.');
+      try { DriveApp.getFileById(String(r.FileId)).setTrashed(true); } catch (e) { /* sudah hilang */ }
+      sheetTulis_(SHEET.GALERI).deleteRow(r._row);
+    } finally { bust_(SHEET.GALERI); lock.releaseLock(); }
+    catatLog_('galeri', user.username, 'Hapus foto ' + id);
+    return true;
   });
 }
 

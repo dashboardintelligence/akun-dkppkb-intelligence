@@ -21,6 +21,7 @@
     { id: 'permintaan', label: 'Permintaan Data', icon: 'upload_file', group: 'Layanan' },
     { id: 'tambahindikator', label: 'Tambah Indikator', icon: 'add_circle', group: 'Administrasi', roles: ['admin'] },
     { id: 'pengguna', label: 'Kelola Pengguna', icon: 'group', group: 'Administrasi', roles: ['admin'] },
+    { id: 'syncform', label: 'Sync Form', icon: 'sync_alt', group: 'Administrasi', roles: ['admin'] },
     { id: 'pengaturan', label: 'Pengaturan', icon: 'settings', group: 'Lainnya' },
     { id: 'panduan', label: 'Panduan Pengguna', icon: 'help', group: 'Lainnya' }
   ];
@@ -69,7 +70,7 @@
     });
   }
   /** Panggil API ber-token. Mengembalikan data atau melempar Error; sesi habis -> kembali ke login. */
-  var PCACHE = {}, READ_API = { apiBootstrap: 1, apiMulai: 1, apiUnduhLampiranPermintaan: 1, apiAmbilIsian: 1, apiDaftarBukti: 1, apiUnduhBukti: 1, apiTarikData: 1, apiUnduhBuktiMonev: 1 };
+  var PCACHE = {}, READ_API = { apiBootstrap: 1, apiMulai: 1, apiUnduhLampiranPermintaan: 1, apiAmbilIsian: 1, apiDaftarBukti: 1, apiUnduhBukti: 1, apiTarikData: 1, apiUnduhBuktiMonev: 1, apiFotoGaleriAdmin: 1 };
   function api(fn, args) {
     if (!READ_API[fn]) pcReset();   // ada perubahan data: buang cache halaman
     args = [AppState.sessionToken].concat(args || []);
@@ -230,6 +231,77 @@
       if (!r || !r.success || !Array.isArray(r.data)) return;
       KAL.data = r.data; card.hidden = false; kalRender();
     }).catch(function () { });
+  }
+
+  /* ---------- galeri halaman awal ---------- */
+  var GAL = { items: [], i: 0, img: {}, timer: null };
+  function galFoto(id) {
+    if (GAL.img[id]) return Promise.resolve(GAL.img[id]);
+    return call('apiFotoGaleri', [id]).then(function (r) {
+      if (!r || !r.success) throw new Error('foto');
+      GAL.img[id] = 'data:' + r.data.mime + ';base64,' + r.data.base64; return GAL.img[id];
+    });
+  }
+  function galTampil(n) {
+    var it = GAL.items[n]; if (!it) return;
+    GAL.i = n;
+    var im = $('#gal-img'); im.classList.add('is-load');
+    galFoto(it.id).then(function (src) {
+      if (GAL.items[GAL.i] !== it) return;
+      im.src = src; im.alt = it.judul || 'Foto kegiatan'; im.classList.remove('is-load');
+      var nx = GAL.items[(n + 1) % GAL.items.length]; if (nx && nx !== it) galFoto(nx.id).catch(function () { });
+    }).catch(function () { im.classList.remove('is-load'); });
+    $('#gal-cap').innerHTML = (it.judul ? '<b>' + esc(it.judul) + '</b>' : '') + (it.ket ? '<span>' + esc(it.ket) + '</span>' : '');
+    $('#gal-cap').hidden = !(it.judul || it.ket);
+    $$('#gal-dots button').forEach(function (b, k) { b.setAttribute('aria-selected', k === n ? 'true' : 'false'); });
+  }
+  function galGeser(d) { if (GAL.items.length) galTampil((GAL.i + d + GAL.items.length) % GAL.items.length); galJalan(); }
+  function galJalan() {
+    clearInterval(GAL.timer);
+    var diam = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (GAL.items.length > 1 && !diam) GAL.timer = setInterval(function () { if (!document.hidden && !$('#gal-card').matches(':hover') && !$('#gal-card').contains(document.activeElement)) galTampil((GAL.i + 1) % GAL.items.length); }, 6000);
+  }
+  function galMuat() {
+    var card = $('#gal-card'); if (!card || !API_URL) return;
+    call('apiGaleriPublik', []).then(function (r) {
+      if (!r || !r.success || !Array.isArray(r.data) || !r.data.length) return;
+      GAL.items = r.data; card.hidden = false;
+      $('#gal-dots').innerHTML = r.data.map(function (x, k) { return '<button type="button" role="tab" aria-label="Foto ' + (k + 1) + '" data-gal="' + k + '"></button>'; }).join('');
+      $('#gal-dots').hidden = r.data.length < 2; $('#gal-prev').hidden = $('#gal-next').hidden = r.data.length < 2;
+      galTampil(0); galJalan();
+    }).catch(function () { });
+  }
+  /** Perkecil foto di peramban (maks 1280 px, JPEG) sebelum diunggah. */
+  function kecilkanFoto(file) {
+    return new Promise(function (ok, gagal) {
+      var url = URL.createObjectURL(file), im = new Image();
+      im.onload = function () {
+        var s = Math.min(1, 1280 / Math.max(im.width, im.height)), cv = document.createElement('canvas');
+        cv.width = Math.round(im.width * s); cv.height = Math.round(im.height * s);
+        cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height); URL.revokeObjectURL(url);
+        ok(cv.toDataURL('image/jpeg', 0.8).split(',')[1]);
+      };
+      im.onerror = function () { URL.revokeObjectURL(url); gagal(new Error('Berkas bukan gambar yang valid.')); };
+      im.src = url;
+    });
+  }
+  function submitGaleri(f) {
+    var msg = $('.form-msg', f), btn = $('button[type=submit]', f), file = $('#gl-file').files[0];
+    msg.className = 'form-msg'; msg.textContent = '';
+    if (!file) { msg.textContent = 'Pilih foto terlebih dahulu.'; return; }
+    if (file.size > 15 * 1048576) { msg.textContent = 'Foto terlalu besar (maks 15 MB sebelum diperkecil).'; return; }
+    var label = btn.innerHTML; btn.disabled = true; btn.textContent = 'Memproses…';
+    kecilkanFoto(file).then(function (b64) {
+      return api('apiUnggahFoto', [{ base64: b64, judul: f.elements.judul.value, ket: f.elements.ket.value }]);
+    }).then(function () { toast('Foto ditambahkan ke galeri.', 'ok'); f.reset(); return reload(); })
+      .catch(function (e) { if (e && e.handled) return; msg.textContent = e.message; btn.disabled = false; btn.innerHTML = label; });
+  }
+  function galThumbs() {
+    $$('[data-gal-thumb]').forEach(function (im) {
+      var id = im.getAttribute('data-gal-thumb');
+      if (GAL.img['a' + id]) { im.src = GAL.img['a' + id]; return; }
+      api('apiFotoGaleriAdmin', [id]).then(function (r) { GAL.img['a' + id] = 'data:' + r.mime + ';base64,' + r.base64; im.src = GAL.img['a' + id]; }).catch(function () { });
+    });
   }
 
   /* ---------- login / sesi ---------- */
@@ -456,6 +528,7 @@
     applyImLayout();
     if (opts && opts.keep) accPulih(); else ACC = {};
     var fib = $('#form-ind-baru'); if (fib) syncIndBaru(fib);
+    if ($('[data-gal-thumb]')) galThumbs();
     var ftk = $('#form-tarik'); if (ftk) syncTarik(ftk);
     if (page === 'pengguna' && AppState.params && AppState.params.tambah) { delete AppState.params.tambah; openUserForm({}); }
     if (AppState.pending) { var fn = AppState.pending; AppState.pending = null; fn(); }
@@ -1138,6 +1211,22 @@
         break;
       }
       case 'edit-keg': { var dk = {}; try { dk = JSON.parse(el.getAttribute('data-json') || '{}'); } catch (e) { } dk.publik = dk.publik ? 'Ya' : 'Tidak'; fillForm('form-kegiatan', dk); break; }
+      case 'gal-geser': { el.disabled = true; api('apiGeserFoto', [el.getAttribute('data-id'), el.getAttribute('data-arah')]).then(function () { return reload(); }).catch(function (e) { el.disabled = false; if (!e.handled) toast(e.message, 'err'); }); break; }
+      case 'gal-simpan': {
+        var row = el.closest('.gal-row'); el.disabled = true;
+        api('apiUbahFoto', [{ id: el.getAttribute('data-id'), judul: $('[data-f=judul]', row).value, ket: $('[data-f=ket]', row).value, tampil: el.getAttribute('data-tampil') }])
+          .then(function () { toast('Foto diperbarui.', 'ok'); return reload(); }).catch(function (e) { el.disabled = false; if (!e.handled) toast(e.message, 'err'); });
+        break;
+      }
+      case 'gal-hapus': {
+        var gid = el.getAttribute('data-id');
+        openModal('Hapus foto?', '<p>Foto <b>' + esc(el.getAttribute('data-judul') || '') + '</b> akan dihapus dari galeri dan Google Drive.</p><div class="form-actions"><button type="button" class="btn btn-primary" id="gal-ya">Ya, hapus</button><button type="button" class="btn btn-ghost" data-act="close-modal">Batal</button></div>');
+        var gy = $('#gal-ya'); if (gy) gy.addEventListener('click', function () {
+          gy.disabled = true; gy.textContent = 'Menghapus…';
+          api('apiHapusFoto', [gid]).then(function () { closeModal(); toast('Foto dihapus.', 'ok'); return reload(); }).catch(function (e) { gy.disabled = false; gy.textContent = 'Ya, hapus'; if (!e.handled) toast(e.message, 'err'); });
+        });
+        break;
+      }
       case 'hapus-keg': {
         var kid = el.getAttribute('data-id');
         openModal('Hapus kegiatan?', '<p>Kegiatan <b>' + esc(el.getAttribute('data-judul') || '') + '</b> akan dihapus dari kalender.</p><div class="form-actions"><button type="button" class="btn btn-primary" id="keg-ya">Ya, hapus</button><button type="button" class="btn btn-ghost" data-act="close-modal">Batal</button></div>');
@@ -1263,6 +1352,7 @@
     if (fid === 'form-bukti') return submitBukti(f);
     if (fid === 'form-monev') return submitMonev(f);
     if (fid === 'form-mbukti') return submitMonevBukti(f);
+    if (fid === 'form-galeri') return submitGaleri(f);
     if (fid === 'form-tarik') return;
     if (f.getAttribute('data-api')) return submitGeneric(f);
   });
@@ -1292,9 +1382,11 @@
     $('#sel-tahun').addEventListener('change', function () { navigateTo(AppState.page, AppState.params).then(function () { prefetchTabs(); prefetchMenu(); }); });
     $('#skip-link').addEventListener('click', function (e) { e.preventDefault(); $('#main').focus(); });
     showLogin('');
+    $('#gal-prev').addEventListener('click', function () { galGeser(-1); }); $('#gal-next').addEventListener('click', function () { galGeser(1); });
+    $('#gal-dots').addEventListener('click', function (ev) { var b = ev.target.closest && ev.target.closest('[data-gal]'); if (b) { galTampil(Number(b.getAttribute('data-gal'))); galJalan(); } });
     $('#kal-prev').addEventListener('click', function () { kalGeser(-1); }); $('#kal-next').addEventListener('click', function () { kalGeser(1); });
     if (API_URL) {
-      kalMuat();
+      kalMuat(); galMuat();
       try { var cm = JSON.parse(localStorage.getItem('dkppkb_merek') || 'null'); if (cm) { applyBrand(cm.nama, cm.sub); applyLogo(cm.logo); applyFavicon(cm.logo); } } catch (e) { }
       call('apiMerek', []).then(function (r) {
         if (!r || !r.success) return;
