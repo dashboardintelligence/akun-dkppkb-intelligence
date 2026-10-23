@@ -116,6 +116,9 @@ Cara memasangnya di aplikasi (ringan, tanpa beban server):
 Desain sekarang sudah baik (palet biru-oranye, font Figtree, mode gelap, kartu membulat,
 navigasi bawah untuk ponsel). Saran penyempurnaan:
 
+> **Sudah diterapkan (Oktober 2026):** gaya visual mengikuti video promosi — status hijau/oranye/merah,
+> judul Space Grotesk, sudut kartu 20px, lambang DK biru, kartu KPI 2 kolom di ponsel. Lihat `KATALOG-MENU.md`.
+
 ### D.1 Identitas visual pemerintahan
 - **Kurangi radius kartu** dari `2rem` menjadi `16px`. Radius besar terasa "aplikasi konsumen";
   radius sedang terasa lebih formal dan muat lebih banyak data.

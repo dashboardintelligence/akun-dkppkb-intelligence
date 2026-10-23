@@ -1261,7 +1261,7 @@ function monevMeta_(mm, user) {
 /* ---------------- Grafik capaian Monev (SVG server-side) ---------------- */
 const GX_WARNA_ = ['#2f7fb5', '#a9d3ee', '#f08a24', '#7a8ea1'];
 const GX_TIER_ = function (c) { return c === null ? 'mute' : c >= 100 ? 'ok' : c >= 80 ? 'warn' : 'crit'; };
-const GX_FILL_ = { ok: '#2f7fb5', warn: '#d9a064', crit: '#f08a24', mute: '#7a8ea1' };
+const GX_FILL_ = { ok: '#00a37f', warn: '#f97316', crit: '#e5322a', mute: '#7a8ea1' };
 
 function gxRata_(arr) {
   const v = arr.filter(x => x !== null && x !== undefined);

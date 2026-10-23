@@ -5,7 +5,8 @@ Berjalan di Google Apps Script (data di Google Sheets, berkas bukti di Google Dr
 
 ## Struktur
 - `src/` — seluruh kode Apps Script (`Kode.gs`, `Halaman.gs`, `Index.html`, `Stylesheet.html`, `JavaScript.html`, `Latar.html`, `appsscript.json`)
-- `docs/` — panduan deploy, kode sematan Blogger, rekomendasi fitur (`REKOMENDASI-FITUR.md`) dan contoh formulir cetak
+- `docs/` — panduan deploy, kode sematan Blogger, rekomendasi fitur (`REKOMENDASI-FITUR.md`), katalog menu bergambar (`KATALOG-MENU.md`) dan contoh formulir cetak
+- `tools/pratinjau/` — menjalankan aplikasi di browser dengan data contoh tanpa deploy (lihat README di dalamnya)
 - `.github/workflows/deploy.yml` — dorong otomatis ke Apps Script (opsional)
 
 ## Dua cara menjalankan tampilan
